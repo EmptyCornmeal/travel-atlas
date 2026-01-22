@@ -1,19 +1,18 @@
-import { createClient, SupabaseClient, User as SupabaseUser } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 import type { CountryState, City, POI, Category, POILink, User } from '../types';
 
-// Supabase configuration - these should be set in environment variables
+
+// =========================
+// Supabase config
+// =========================
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-// Allowlisted emails (only these users can access the app)
-const ALLOWLISTED_EMAILS = (import.meta.env.VITE_ALLOWLISTED_EMAILS || '').split(',').map((e: string) => e.trim().toLowerCase());
+// User name/color mapping by email (JSON in env)
+const USER_CONFIG: Record<string, { name: string; color: 'blue' | 'red' }> = {};
 
-// User name/color mapping by email
-const USER_CONFIG: Record<string, { name: string; color: 'blue' | 'red' }> = {
-  // Will be populated from env or defaults
-};
-
-// Parse user config from env
 const userConfigStr = import.meta.env.VITE_USER_CONFIG || '';
 if (userConfigStr) {
   try {
@@ -26,30 +25,27 @@ if (userConfigStr) {
 
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Check if email is allowlisted
-export function isEmailAllowlisted(email: string): boolean {
-  return ALLOWLISTED_EMAILS.includes(email.toLowerCase());
+// =========================
+// User helpers
+// =========================
+// RLS in Supabase enforces allowlisting; do not rely on client-side allowlists.
+export function isEmailAllowlisted(_email: string): boolean {
+  return true;
 }
 
-// Get user info from email
-export function getUserInfo(email: string): { name: string; color: 'blue' | 'red' } | null {
-  const config = USER_CONFIG[email.toLowerCase()];
-  if (config) return config;
+export function getUserInfo(email: string): { name: string; color: 'blue' | 'red' } {
+  const cfg = USER_CONFIG[email.toLowerCase()];
+  if (cfg) return cfg;
 
-  // Default assignment based on order in allowlist
-  const index = ALLOWLISTED_EMAILS.indexOf(email.toLowerCase());
-  if (index === 0) return { name: email.split('@')[0], color: 'blue' };
-  if (index === 1) return { name: email.split('@')[0], color: 'red' };
-  return null;
+  // Safe fallback (not security-related)
+  return { name: email.split('@')[0], color: 'blue' };
 }
 
-// Convert Supabase user to app User type
 export function toAppUser(supabaseUser: SupabaseUser): User | null {
   const email = supabaseUser.email;
-  if (!email || !isEmailAllowlisted(email)) return null;
+  if (!email) return null;
 
   const info = getUserInfo(email);
-  if (!info) return null;
 
   return {
     id: supabaseUser.id,
@@ -59,16 +55,17 @@ export function toAppUser(supabaseUser: SupabaseUser): User | null {
   };
 }
 
-// Auth functions
+// =========================
+// Auth
+// =========================
 export async function signInWithMagicLink(email: string): Promise<{ error: Error | null }> {
-  if (!isEmailAllowlisted(email)) {
-    return { error: new Error('Email not authorized') };
-  }
+  // Use BASE_URL so it works on GitHub Pages (/travel-atlas/)
+  const redirectTo = window.location.origin + import.meta.env.BASE_URL;
 
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: window.location.origin,
+      emailRedirectTo: redirectTo,
     },
   });
 
@@ -80,40 +77,39 @@ export async function signOut(): Promise<void> {
 }
 
 export async function getCurrentUser(): Promise<User | null> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  return toAppUser(user);
+  const { data, error } = await supabase.auth.getUser();
+  if (error) return null;
+  if (!data?.user) return null;
+  return toAppUser(data.user);
 }
 
-// Get the other allowlisted user (for display purposes)
+/**
+ * "Other user" is optional sugar for UI. We derive it from VITE_USER_CONFIG keys.
+ * ID is left blank unless you later choose to resolve via profiles table.
+ */
 export async function getOtherUser(currentEmail: string): Promise<User | null> {
-  const otherEmail = ALLOWLISTED_EMAILS.find(e => e !== currentEmail.toLowerCase());
+  const emails = Object.keys(USER_CONFIG).map(e => e.toLowerCase());
+  const otherEmail = emails.find(e => e !== currentEmail.toLowerCase());
   if (!otherEmail) return null;
 
   const info = getUserInfo(otherEmail);
-  if (!info) return null;
-
-  // We need to get the user ID from Supabase if they exist
-  // For now, create a placeholder - the ID will be resolved when we see their data
   return {
-    id: '', // Will be resolved from data
+    id: '',
     email: otherEmail,
     name: info.name,
     color: info.color,
   };
 }
 
-// Country state functions
+// =========================
+// Countries
+// =========================
 export async function fetchCountriesState(): Promise<CountryState[]> {
-  const { data, error } = await supabase
-    .from('countries_state')
-    .select('*');
-
+  const { data, error } = await supabase.from('countries_state').select('*');
   if (error) {
     console.error('Error fetching countries state:', error);
     return [];
   }
-
   return data || [];
 }
 
@@ -134,7 +130,9 @@ export async function setCountryFlag(
   }
 }
 
-// City functions
+// =========================
+// Cities
+// =========================
 export async function fetchCities(): Promise<City[]> {
   const { data, error } = await supabase
     .from('cities')
@@ -149,12 +147,10 @@ export async function fetchCities(): Promise<City[]> {
   return data || [];
 }
 
-export async function createCity(city: Omit<City, 'id' | 'created_at' | 'created_by'>): Promise<City | null> {
-  const { data, error } = await supabase
-    .from('cities')
-    .insert([city])
-    .select()
-    .single();
+export async function createCity(
+  city: Omit<City, 'id' | 'created_at' | 'created_by'>
+): Promise<City | null> {
+  const { data, error } = await supabase.from('cities').insert([city]).select().single();
 
   if (error) {
     console.error('Error creating city:', error);
@@ -181,26 +177,14 @@ export async function setCityFlag(
   }
 }
 
-export async function updateCity(
-  city_id: string,
-  updates: { name?: string }
-): Promise<void> {
-  const { error } = await supabase
-    .from('cities')
-    .update(updates)
-    .eq('id', city_id);
-
-  if (error) {
-    console.error('Error updating city:', error);
-    throw error;
-  }
-}
+/**
+ * NOTE: updateCity() removed on purpose.
+ * Your RLS disables direct UPDATE on cities (updates must go through RPC),
+ * and v1 does not require renaming cities.
+ */
 
 export async function deleteCity(city_id: string): Promise<void> {
-  const { error } = await supabase
-    .from('cities')
-    .delete()
-    .eq('id', city_id);
+  const { error } = await supabase.from('cities').delete().eq('id', city_id);
 
   if (error) {
     console.error('Error deleting city:', error);
@@ -208,12 +192,11 @@ export async function deleteCity(city_id: string): Promise<void> {
   }
 }
 
-// POI functions
+// =========================
+// POIs
+// =========================
 export async function fetchPOIs(): Promise<POI[]> {
-  const { data, error } = await supabase
-    .from('pois')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const { data, error } = await supabase.from('pois').select('*').order('created_at', { ascending: false });
 
   if (error) {
     console.error('Error fetching POIs:', error);
@@ -223,7 +206,9 @@ export async function fetchPOIs(): Promise<POI[]> {
   return data || [];
 }
 
-export async function createPOI(poi: Omit<POI, 'id' | 'created_at' | 'created_by' | 'endorsed_by'>): Promise<POI | null> {
+export async function createPOI(
+  poi: Omit<POI, 'id' | 'created_at' | 'created_by' | 'endorsed_by'>
+): Promise<POI | null> {
   const { data, error } = await supabase
     .from('pois')
     .insert([{ ...poi, endorsed_by: {} }])
@@ -250,7 +235,7 @@ export async function updatePOIAsCreator(
   }
 ): Promise<void> {
   const { error } = await supabase.rpc('update_poi_as_creator', {
-    p_poi_id: poi_id,
+    p_id: poi_id, // IMPORTANT: matches your actual function signature (p_id ...)
     p_label: updates.label,
     p_status: updates.status,
     p_category_id: updates.category_id,
@@ -267,7 +252,7 @@ export async function updatePOIAsCreator(
 
 export async function setPOIEndorsement(poi_id: string, value: boolean): Promise<void> {
   const { error } = await supabase.rpc('set_poi_endorsement', {
-    p_poi_id: poi_id,
+    p_id: poi_id, // IMPORTANT: matches your actual function signature (p_id ...)
     p_value: value,
   });
 
@@ -278,10 +263,7 @@ export async function setPOIEndorsement(poi_id: string, value: boolean): Promise
 }
 
 export async function deletePOI(poi_id: string): Promise<void> {
-  const { error } = await supabase
-    .from('pois')
-    .delete()
-    .eq('id', poi_id);
+  const { error } = await supabase.from('pois').delete().eq('id', poi_id);
 
   if (error) {
     console.error('Error deleting POI:', error);
@@ -289,12 +271,11 @@ export async function deletePOI(poi_id: string): Promise<void> {
   }
 }
 
-// Category functions
+// =========================
+// Categories
+// =========================
 export async function fetchCategories(): Promise<Category[]> {
-  const { data, error } = await supabase
-    .from('categories')
-    .select('*')
-    .order('name');
+  const { data, error } = await supabase.from('categories').select('*').order('name');
 
   if (error) {
     console.error('Error fetching categories:', error);
@@ -305,8 +286,8 @@ export async function fetchCategories(): Promise<Category[]> {
 }
 
 export async function createCategory(name: string): Promise<Category | null> {
-  // Normalize the name
   const normalizedName = name.trim().replace(/\s+/g, ' ');
+  if (!normalizedName) return null;
 
   const { data, error } = await supabase
     .from('categories')
@@ -314,7 +295,23 @@ export async function createCategory(name: string): Promise<Category | null> {
     .select()
     .single();
 
+  // If unique violation, fetch the existing category and return it
   if (error) {
+    // Postgres unique violation code is 23505 (often exposed as error.code)
+    // If not present, we still just throw.
+    // @ts-expect-error supabase error typing varies
+    const code = (error as any)?.code;
+    if (code === '23505') {
+      const { data: existing, error: fetchErr } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('name', normalizedName)
+        .single();
+
+      if (fetchErr) throw fetchErr;
+      return existing;
+    }
+
     console.error('Error creating category:', error);
     throw error;
   }
@@ -323,10 +320,7 @@ export async function createCategory(name: string): Promise<Category | null> {
 }
 
 export async function deleteCategory(category_id: string): Promise<void> {
-  const { error } = await supabase
-    .from('categories')
-    .delete()
-    .eq('id', category_id);
+  const { error } = await supabase.from('categories').delete().eq('id', category_id);
 
   if (error) {
     console.error('Error deleting category:', error);
