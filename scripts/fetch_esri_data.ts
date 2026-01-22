@@ -178,7 +178,13 @@ async function fetchCountries(): Promise<void> {
     serviceUrl = 'https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/World_Countries_Generalized/FeatureServer/0';
   }
 
+  // ✅ ArcGIS item URLs often point at FeatureServer root. Query needs a layer (/0).
+  if (/\/FeatureServer\/?$/.test(serviceUrl)) {
+    serviceUrl = serviceUrl.replace(/\/FeatureServer\/?$/, '/FeatureServer/0');
+  }
+
   console.log(`Service URL: ${serviceUrl}`);
+
 
   // Query features - focus on getting ISO_A3 and country name
   const features = await queryFeatures(serviceUrl, {
