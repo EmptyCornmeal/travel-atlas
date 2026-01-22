@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
-import maplibregl, { Map, GeoJSONSource, MapMouseEvent, LngLatLike } from 'maplibre-gl';
+import maplibregl from 'maplibre-gl';
+import type { Map, GeoJSONSource, MapMouseEvent, LngLatLike } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { CountryState, City, POI, User, FilterState, LayerVisibility, Selection } from '../types';
 import { USER_COLORS } from '../types';
@@ -19,24 +20,38 @@ interface TravelMapProps {
   onMapClick: (lat: number, lng: number) => void;
 }
 
-// Hatched pattern SVG for "want" status
-const HATCH_PATTERN_BLUE = createHatchPattern(USER_COLORS.blue.solid);
-const HATCH_PATTERN_RED = createHatchPattern(USER_COLORS.red.solid);
-const HATCH_PATTERN_PURPLE = createHatchPattern(USER_COLORS.purple.solid);
+// Hatched pattern images for "want" status (PNG data URIs — MapLibre-friendly)
+const HATCH_PATTERN_BLUE = createHatchPatternPng(USER_COLORS.blue.solid);
+const HATCH_PATTERN_RED = createHatchPatternPng(USER_COLORS.red.solid);
+const HATCH_PATTERN_PURPLE = createHatchPatternPng(USER_COLORS.purple.solid);
 
-function createHatchPattern(color: string): string {
-  const svg = `
-    <svg width="10" height="10" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="hatch" patternUnits="userSpaceOnUse" width="10" height="10">
-          <path d="M0 10L10 0M-2 2L2 -2M8 12L12 8" stroke="${color}" stroke-width="2" fill="none"/>
-        </pattern>
-      </defs>
-      <rect width="10" height="10" fill="url(#hatch)"/>
-    </svg>
-  `;
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+function createHatchPatternPng(color: string): string {
+  const size = 16;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  // transparent background
+  ctx.clearRect(0, 0, size, size);
+
+  // draw diagonal hatch lines
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+
+  // A few lines to tile nicely
+  for (let i = -size; i <= size * 2; i += 6) {
+    ctx.beginPath();
+    ctx.moveTo(i, size);
+    ctx.lineTo(i + size, 0);
+    ctx.stroke();
+  }
+
+  return canvas.toDataURL('image/png');
 }
+
 
 export function TravelMap({
   user,
@@ -310,14 +325,14 @@ export function TravelMap({
 
     // Add click handlers
     mapInstance.on('click', 'countries-fill', (e: MapMouseEvent) => {
-      const feature = e.features?.[0];
+     const feature = (e as any).features?.[0];
       if (feature?.properties?.iso_a3) {
         onCountryClick(feature.properties.iso_a3);
       }
     });
 
     mapInstance.on('click', 'countries-pattern', (e: MapMouseEvent) => {
-      const feature = e.features?.[0];
+     const feature = (e as any).features?.[0];
       if (feature?.properties?.iso_a3) {
         onCountryClick(feature.properties.iso_a3);
       }
@@ -325,7 +340,7 @@ export function TravelMap({
 
     mapInstance.on('click', 'cities-circle', (e: MapMouseEvent) => {
       e.originalEvent.stopPropagation();
-      const feature = e.features?.[0];
+     const feature = (e as any).features?.[0];
       if (feature?.properties?.id) {
         onCityClick(feature.properties.id);
       }
@@ -333,7 +348,7 @@ export function TravelMap({
 
     mapInstance.on('click', 'pois-point', (e: MapMouseEvent) => {
       e.originalEvent.stopPropagation();
-      const feature = e.features?.[0];
+     const feature = (e as any).features?.[0];
       if (feature?.properties?.id) {
         onPOIClick(feature.properties.id);
       }
@@ -405,7 +420,8 @@ export function TravelMap({
     if (!map.current) return;
 
     try {
-      const response = await fetch('/data/countries.geojson');
+      const base = import.meta.env.BASE_URL;
+      const response = await fetch(`${base}data/countries.geojson`);
       const countriesGeoJSON: GeoJSON.FeatureCollection = await response.json();
 
       // Merge with state and apply styling
@@ -523,20 +539,16 @@ export function TravelMap({
   );
 }
 
-// Helper to load image into map
-async function loadImage(mapInstance: Map, name: string, url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    mapInstance.loadImage(url, (error, image) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      if (image && !mapInstance.hasImage(name)) {
-        mapInstance.addImage(name, image);
-      }
-      resolve();
-    });
-  });
+// Helper to load image into map (Promise-based)
+async function loadImage(
+  mapInstance: Map,
+  name: string,
+  url: string
+): Promise<void> {
+  if (mapInstance.hasImage(name)) return;
+
+  const image = await mapInstance.loadImage(url);
+  mapInstance.addImage(name, image.data);
 }
 
 // Determine who has marked an entity
