@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.91.0",
+    "@turf/turf": "^7.3.2",
     "@types/geojson": "^7946.0.16",
     "maplibre-gl": "^5.16.0",
     "react": "^19.2.0",

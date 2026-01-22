@@ -26,6 +26,7 @@ import { Auth } from './ui/Auth';
 import { POIForm } from './ui/POIForm';
 import { ToastContainer, useToasts } from './ui/Toast';
 import './App.css';
+import { findCountryIsoA3 } from './utils/geo';
 
 // Sync interval (15 seconds)
 const SYNC_INTERVAL = 15000;
@@ -426,39 +427,44 @@ useEffect(() => {
     }
   }, [user, toast]);
 
-  // Submit POI form
-  const handlePOIFormSubmit = useCallback(async (poi: {
-    label: string;
-    lat: number;
-    lng: number;
-    status: 'want' | 'been';
-    category_id: string | null;
-    priority: 'low' | 'med' | 'high' | null;
-    notes: string | null;
-    links: POILink[];
-  }) => {
-    if (!user) return;
+// Submit POI form
+const handlePOIFormSubmit = useCallback(async (poi: {
+  label: string;
+  lat: number;
+  lng: number;
+  status: 'want' | 'been';
+  category_id: string | null;
+  priority: 'low' | 'med' | 'high' | null;
+  notes: string | null;
+  links: POILink[];
+}) => {
+  if (!user) return;
 
-    setIsLoading(true);
-    try {
-      const newPOI = await createPOI({
-        ...poi,
-        country_iso_a3: null,
-        city_id: null,
-      });
+  setIsLoading(true);
+  try {
+    const isoA3 =
+      countriesGeoJSON
+        ? findCountryIsoA3(countriesGeoJSON, poi.lat, poi.lng)
+        : null;
 
-      if (newPOI) {
-        setPOIs(prev => [newPOI, ...prev]);
-        setShowPOIForm(null);
-        setSelection({ type: 'poi', id: newPOI.id });
-        toast.success('POI added');
-      }
-    } catch (error) {
-      console.error('Error creating POI:', error);
-      toast.error('Failed to add POI');
+    const newPOI = await createPOI({
+      ...poi,
+      country_iso_a3: isoA3,
+      city_id: null,
+    });
+
+    if (newPOI) {
+      setPOIs(prev => [newPOI, ...prev]);
+      setShowPOIForm(null);
+      setSelection({ type: 'poi', id: newPOI.id });
+      toast.success('POI added');
     }
-    setIsLoading(false);
-  }, [user, toast]);
+  } catch (error) {
+    console.error('Error creating POI:', error);
+    toast.error('Failed to add POI');
+  }
+  setIsLoading(false);
+}, [user, countriesGeoJSON, toast]);
 
   // Show auth screen if not logged in
   if (isAuthChecking) {
