@@ -1,8 +1,18 @@
 import { useState, useCallback, useMemo } from 'react';
+import bbox from '@turf/bbox';
 import type { FilterState, LayerVisibility, Category, User } from '../types';
 import { searchPlaces, debounce, type GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
 import './LeftPanel.css';
+
+// Country search result type
+export interface CountrySearchResult {
+  id: string;
+  isoA3: string;
+  name: string;
+  bbox: [number, number, number, number]; // [minLng, minLat, maxLng, maxLat]
+  type: 'country';
+}
 
 interface LeftPanelProps {
   user: User;
@@ -10,10 +20,12 @@ interface LeftPanelProps {
   filters: FilterState;
   layers: LayerVisibility;
   categories: Category[];
+  countriesGeoJSON: GeoJSON.FeatureCollection | null;
   worldCities: GeoJSON.FeatureCollection | null;
   onFiltersChange: (filters: FilterState) => void;
   onLayersChange: (layers: LayerVisibility) => void;
   onSearchResultSelect: (result: GeocodingResult, type: 'city' | 'poi') => void;
+  onCountrySelect: (isoA3: string, bbox: [number, number, number, number]) => void;
 }
 
 export function LeftPanel({
@@ -22,29 +34,63 @@ export function LeftPanel({
   filters,
   layers,
   categories,
+  countriesGeoJSON,
   worldCities,
   onFiltersChange,
   onLayersChange,
   onSearchResultSelect,
+  onCountrySelect,
 }: LeftPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [countryResults, setCountryResults] = useState<CountrySearchResult[]>([]);
   const [searchResults, setSearchResults] = useState<GeocodingResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showAddOptions, setShowAddOptions] = useState<GeocodingResult | null>(null);
 
-  // Search in world cities dataset first, then fall back to Nominatim
+  // Search countries, then world cities, then fall back to Nominatim
   const performSearch = useCallback(async (query: string) => {
-    if (!query.trim()) {
+    if (!query.trim() || query.length < 2) {
+      setCountryResults([]);
       setSearchResults([]);
       return;
     }
 
     setIsSearching(true);
+    const lowerQuery = query.toLowerCase();
 
-    // First, search in local world cities dataset
+    // First, search countries by name
+    const matchedCountries: CountrySearchResult[] = [];
+    if (countriesGeoJSON) {
+      countriesGeoJSON.features.forEach(feature => {
+        const name = feature.properties?.name || '';
+        const isoA3 = feature.properties?.iso_a3;
+
+        if (isoA3 && name.toLowerCase().includes(lowerQuery)) {
+          // Compute bbox for the country
+          const featureBbox = bbox(feature as any) as [number, number, number, number];
+          matchedCountries.push({
+            id: `country-${isoA3}`,
+            isoA3,
+            name,
+            bbox: featureBbox,
+            type: 'country',
+          });
+        }
+      });
+    }
+    // Sort: exact matches first, then by name length (shorter = more specific)
+    matchedCountries.sort((a, b) => {
+      const aExact = a.name.toLowerCase() === lowerQuery;
+      const bExact = b.name.toLowerCase() === lowerQuery;
+      if (aExact && !bExact) return -1;
+      if (!aExact && bExact) return 1;
+      return a.name.length - b.name.length;
+    });
+    setCountryResults(matchedCountries.slice(0, 5));
+
+    // Then search in local world cities dataset
     const localResults: GeocodingResult[] = [];
     if (worldCities) {
-      const lowerQuery = query.toLowerCase();
       worldCities.features.forEach(feature => {
         const name = feature.properties?.name || feature.properties?.CITY_NAME || '';
         const country = feature.properties?.country || feature.properties?.CNTRY_NAME || '';
@@ -64,7 +110,7 @@ export function LeftPanel({
       });
     }
 
-    // If we have local results, show them first
+    // If we have local results, show them
     if (localResults.length > 0) {
       setSearchResults(localResults.slice(0, 10));
     }
@@ -82,7 +128,7 @@ export function LeftPanel({
     }
 
     setIsSearching(false);
-  }, [worldCities]);
+  }, [countriesGeoJSON, worldCities]);
 
   // Debounced search
   const debouncedSearch = useMemo(
@@ -96,6 +142,13 @@ export function LeftPanel({
     debouncedSearch(query);
   };
 
+  const handleCountryResultClick = (result: CountrySearchResult) => {
+    onCountrySelect(result.isoA3, result.bbox);
+    setSearchQuery('');
+    setCountryResults([]);
+    setSearchResults([]);
+  };
+
   const handleResultClick = (result: GeocodingResult) => {
     setShowAddOptions(result);
   };
@@ -104,6 +157,7 @@ export function LeftPanel({
     onSearchResultSelect(result, type);
     setShowAddOptions(null);
     setSearchQuery('');
+    setCountryResults([]);
     setSearchResults([]);
   };
 
@@ -135,15 +189,26 @@ export function LeftPanel({
       <div className="search-section">
         <input
           type="text"
-          placeholder="Search cities or places..."
+          placeholder="Search countries, cities, or places..."
           value={searchQuery}
           onChange={handleSearchChange}
           className="search-input"
         />
         {isSearching && <div className="search-loading">Searching...</div>}
 
-        {searchResults.length > 0 && (
+        {(countryResults.length > 0 || searchResults.length > 0) && (
           <ul className="search-results">
+            {/* Country results first */}
+            {countryResults.map(result => (
+              <li key={result.id} className="search-result-item">
+                <button onClick={() => handleCountryResultClick(result)} className="result-btn">
+                  <span className="result-name">{result.name}</span>
+                  <span className="result-detail">Country</span>
+                  <span className="result-type type-country">country</span>
+                </button>
+              </li>
+            ))}
+            {/* City/place results */}
             {searchResults.map(result => (
               <li key={result.id} className="search-result-item">
                 {showAddOptions?.id === result.id ? (

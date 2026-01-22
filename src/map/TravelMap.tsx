@@ -14,6 +14,7 @@ interface TravelMapProps {
   filters: FilterState;
   layers: LayerVisibility;
   selection: Selection;
+  focusCountry?: { isoA3: string; bbox: [number, number, number, number] } | null;
   onCountryClick: (isoA3: string) => void;
   onCityClick: (cityId: string) => void;
   onPOIClick: (poiId: string) => void;
@@ -62,6 +63,7 @@ export function TravelMap({
   filters,
   layers,
   selection,
+  focusCountry,
   onCountryClick,
   onCityClick,
   onPOIClick,
@@ -133,6 +135,18 @@ export function TravelMap({
     mapInstance.addSource('countries', {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
+    });
+
+    // Add countries neutral fill layer (for unmarked countries - clickable but faint)
+    mapInstance.addLayer({
+      id: 'countries-neutral',
+      type: 'fill',
+      source: 'countries',
+      paint: {
+        'fill-color': ['get', 'fillColor'],
+        'fill-opacity': ['get', 'fillOpacity'],
+      },
+      filter: ['==', ['get', 'pattern'], 'none'],
     });
 
     // Add countries fill layer (for solid "been" status)
@@ -323,19 +337,15 @@ export function TravelMap({
       },
     });
 
-    // Add click handlers
-    mapInstance.on('click', 'countries-fill', (e: MapMouseEvent) => {
-     const feature = (e as any).features?.[0];
-      if (feature?.properties?.iso_a3) {
-        onCountryClick(feature.properties.iso_a3);
-      }
-    });
-
-    mapInstance.on('click', 'countries-pattern', (e: MapMouseEvent) => {
-     const feature = (e as any).features?.[0];
-      if (feature?.properties?.iso_a3) {
-        onCountryClick(feature.properties.iso_a3);
-      }
+    // Add click handlers for all country layers
+    const countryLayers = ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline'];
+    countryLayers.forEach(layerId => {
+      mapInstance.on('click', layerId, (e: MapMouseEvent) => {
+        const feature = (e as any).features?.[0];
+        if (feature?.properties?.iso_a3) {
+          onCountryClick(feature.properties.iso_a3);
+        }
+      });
     });
 
     mapInstance.on('click', 'cities-circle', (e: MapMouseEvent) => {
@@ -374,7 +384,7 @@ export function TravelMap({
     mapInstance.on('click', (e: MapMouseEvent) => {
       // Check if we clicked on a feature
       const features = mapInstance.queryRenderedFeatures(e.point, {
-        layers: ['countries-fill', 'countries-pattern', 'cities-circle', 'pois-point', 'pois-cluster'],
+        layers: ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline', 'cities-circle', 'pois-point', 'pois-cluster'],
       });
 
       if (features.length === 0) {
@@ -383,7 +393,7 @@ export function TravelMap({
     });
 
     // Cursor changes
-    const pointerLayers = ['countries-fill', 'countries-pattern', 'cities-circle', 'pois-point', 'pois-cluster'];
+    const pointerLayers = ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline', 'cities-circle', 'pois-point', 'pois-cluster'];
     pointerLayers.forEach(layer => {
       mapInstance.on('mouseenter', layer, () => {
         mapInstance.getCanvas().style.cursor = 'pointer';
@@ -415,6 +425,18 @@ export function TravelMap({
     updatePOIsData();
   }, [pois, filters, layers.pois, selection, user, otherUser]);
 
+  // Zoom to country when focusCountry changes
+  useEffect(() => {
+    if (!map.current || !loaded.current || !focusCountry) return;
+
+    const { bbox } = focusCountry;
+    // bbox is [minLng, minLat, maxLng, maxLat]
+    map.current.fitBounds(
+      [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
+      { padding: 40, duration: 700 }
+    );
+  }, [focusCountry]);
+
   // Load and process countries data
   const loadCountriesData = useCallback(async () => {
     if (!map.current) return;
@@ -424,15 +446,16 @@ export function TravelMap({
       const response = await fetch(`${base}data/countries.geojson`);
       const countriesGeoJSON: GeoJSON.FeatureCollection = await response.json();
 
-      // Merge with state and apply styling
+      // Merge with state and apply styling - include ALL countries
       const styledFeatures = countriesGeoJSON.features
         .map(feature => {
           const isoA3 = feature.properties?.iso_a3;
           if (!isoA3) return null;
 
           const state = countriesState.find(s => s.iso_a3 === isoA3);
-          const styling = getCountryStyling(state, user, otherUser, filters, selection);
+          const styling = getCountryStyling(state, user, otherUser, filters, selection, isoA3);
 
+          // Filter out invisible countries but keep all others
           if (!styling.visible || !layers.countries) return null;
 
           return {
@@ -572,40 +595,57 @@ function getCountryStyling(
   user: User,
   otherUser: User | null,
   filters: FilterState,
-  selection: Selection
+  selection: Selection,
+  isoA3: string
 ): {
   visible: boolean;
   fillColor: string;
   outlineColor: string;
   fillOpacity: number;
-  pattern: 'solid' | 'hatched';
+  pattern: 'solid' | 'hatched' | 'none';
   patternImage: string;
 } {
-  const defaultStyling = {
-    visible: false,
-    fillColor: '#9CA3AF',
-    outlineColor: '#6B7280',
-    fillOpacity: 0.1,
-    pattern: 'solid' as const,
+  // Neutral styling for unmarked countries (visible but faint)
+  const neutralStyling = {
+    visible: true,
+    fillColor: '#D1D5DB',
+    outlineColor: '#9CA3AF',
+    fillOpacity: 0.08,
+    pattern: 'none' as const,
     patternImage: '',
   };
 
-  if (!state) return defaultStyling;
+  // Hidden styling
+  const hiddenStyling = {
+    ...neutralStyling,
+    visible: false,
+  };
 
-  const { userWant, userBeen, otherWant, otherBeen } = getWhoMarked(
-    state.want_by || {},
-    state.been_by || {},
-    user.id,
-    otherUser?.id || null
-  );
+  const { userWant, userBeen, otherWant, otherBeen } = state
+    ? getWhoMarked(
+        state.want_by || {},
+        state.been_by || {},
+        user.id,
+        otherUser?.id || null
+      )
+    : { userWant: false, userBeen: false, otherWant: false, otherBeen: false };
 
   // Determine if anything is marked
   const hasAnyMark = userWant || userBeen || otherWant || otherBeen;
-  if (!hasAnyMark) return defaultStyling;
 
-  // Apply filters
+  // If no marks, show neutral unless filters are restricting
+  if (!hasAnyMark) {
+    // When filters are "all", show unmarked countries as neutral
+    // When filters are specific (mine/theirs/both/want/been), hide unmarked
+    if (filters.who !== 'all' || filters.status !== 'all') {
+      return hiddenStyling;
+    }
+    return neutralStyling;
+  }
+
+  // Apply filters to marked countries
   if (!passesWhoFilter(userWant || userBeen, otherWant || otherBeen, filters.who)) {
-    return defaultStyling;
+    return hiddenStyling;
   }
 
   // Determine final status (been wins over want)
@@ -618,8 +658,8 @@ function getCountryStyling(
   const hasBeen = effectiveUserBeen || effectiveOtherBeen;
   const hasWant = effectiveUserWant || effectiveOtherWant;
 
-  if (filters.status === 'been' && !hasBeen) return defaultStyling;
-  if (filters.status === 'want' && !hasWant) return defaultStyling;
+  if (filters.status === 'been' && !hasBeen) return hiddenStyling;
+  if (filters.status === 'want' && !hasWant) return hiddenStyling;
 
   // Determine color (who)
   const bothBeen = effectiveUserBeen && effectiveOtherBeen;
@@ -647,7 +687,7 @@ function getCountryStyling(
     color = otherUser.color;
     pattern = 'hatched';
   } else {
-    return defaultStyling;
+    return neutralStyling;
   }
 
   const colors = USER_COLORS[color];
