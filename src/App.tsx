@@ -97,31 +97,34 @@ function App() {
     };
   }, []);
 
-  // Load GeoJSON data on mount
-  useEffect(() => {
-    const loadGeoJSON = async () => {
-      try {
-        const [countriesRes, citiesRes] = await Promise.all([
-          fetch('/data/countries.geojson'),
-          fetch('/data/world_cities.geojson'),
-        ]);
+// Load GeoJSON data on mount
+useEffect(() => {
+  const loadGeoJSON = async () => {
+    try {
+      const base = import.meta.env.BASE_URL; // "/travel-atlas/" in production
 
-        if (countriesRes.ok) {
-          const data = await countriesRes.json();
-          setCountriesGeoJSON(data);
-        }
+      const [countriesRes, citiesRes] = await Promise.all([
+        fetch(`${base}data/countries.geojson`),
+        fetch(`${base}data/world_cities.geojson`),
+      ]);
 
-        if (citiesRes.ok) {
-          const data = await citiesRes.json();
-          setWorldCities(data);
-        }
-      } catch (error) {
-        console.error('Error loading GeoJSON:', error);
+      if (countriesRes.ok) {
+        const data = await countriesRes.json();
+        setCountriesGeoJSON(data);
       }
-    };
 
-    loadGeoJSON();
-  }, []);
+      if (citiesRes.ok) {
+        const data = await citiesRes.json();
+        setWorldCities(data);
+      }
+    } catch (error) {
+      console.error('Error loading GeoJSON:', error);
+    }
+  };
+
+  loadGeoJSON();
+}, []);
+
 
   // Fetch data when user is authenticated
   const fetchAllData = useCallback(async () => {
