@@ -1,0 +1,544 @@
+import { useState, useEffect, useCallback } from 'react';
+import type { User, CountryState, City, POI, Category, FilterState, LayerVisibility, Selection, POILink } from './types';
+import {
+  supabase,
+  getCurrentUser,
+  getOtherUser,
+  fetchCountriesState,
+  fetchCities,
+  fetchPOIs,
+  fetchCategories,
+  setCountryFlag,
+  createCity,
+  setCityFlag,
+  deleteCity,
+  createPOI,
+  updatePOIAsCreator,
+  setPOIEndorsement,
+  deletePOI,
+  createCategory,
+} from './services/supabase';
+import { type GeocodingResult } from './services/geocoding';
+import { TravelMap } from './map/TravelMap';
+import { LeftPanel } from './ui/LeftPanel';
+import { RightPanel } from './ui/RightPanel';
+import { Auth } from './ui/Auth';
+import { POIForm } from './ui/POIForm';
+import { ToastContainer, useToasts } from './ui/Toast';
+import './App.css';
+
+// Sync interval (15 seconds)
+const SYNC_INTERVAL = 15000;
+
+function App() {
+  // Auth state
+  const [user, setUser] = useState<User | null>(null);
+  const [otherUser, setOtherUser] = useState<User | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // Data state
+  const [countriesState, setCountriesState] = useState<CountryState[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
+  const [pois, setPOIs] = useState<POI[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [countriesGeoJSON, setCountriesGeoJSON] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [worldCities, setWorldCities] = useState<GeoJSON.FeatureCollection | null>(null);
+
+  // UI state
+  const [filters, setFilters] = useState<FilterState>({
+    who: 'all',
+    status: 'all',
+    categories: [],
+    priority: 'all',
+  });
+  const [layers, setLayers] = useState<LayerVisibility>({
+    countries: true,
+    cities: true,
+    pois: true,
+  });
+  const [selection, setSelection] = useState<Selection>({ type: null, id: null });
+  const [isLoading, setIsLoading] = useState(false);
+  const [showPOIForm, setShowPOIForm] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Toast notifications
+  const toast = useToasts();
+
+  // Check auth state on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const currentUser = await getCurrentUser();
+      if (currentUser) {
+        setUser(currentUser);
+        const other = await getOtherUser(currentUser.email);
+        setOtherUser(other);
+      }
+      setIsAuthChecking(false);
+    };
+
+    checkAuth();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        const currentUser = await getCurrentUser();
+        if (currentUser) {
+          setUser(currentUser);
+          const other = await getOtherUser(currentUser.email);
+          setOtherUser(other);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setOtherUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Load GeoJSON data on mount
+  useEffect(() => {
+    const loadGeoJSON = async () => {
+      try {
+        const [countriesRes, citiesRes] = await Promise.all([
+          fetch('/data/countries.geojson'),
+          fetch('/data/world_cities.geojson'),
+        ]);
+
+        if (countriesRes.ok) {
+          const data = await countriesRes.json();
+          setCountriesGeoJSON(data);
+        }
+
+        if (citiesRes.ok) {
+          const data = await citiesRes.json();
+          setWorldCities(data);
+        }
+      } catch (error) {
+        console.error('Error loading GeoJSON:', error);
+      }
+    };
+
+    loadGeoJSON();
+  }, []);
+
+  // Fetch data when user is authenticated
+  const fetchAllData = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const [countries, citiesData, poisData, categoriesData] = await Promise.all([
+        fetchCountriesState(),
+        fetchCities(),
+        fetchPOIs(),
+        fetchCategories(),
+      ]);
+
+      setCountriesState(countries);
+      setCities(citiesData);
+      setPOIs(poisData);
+      setCategories(categoriesData);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      toast.error('Failed to load data');
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchAllData();
+    }
+  }, [user, fetchAllData]);
+
+  // Periodic sync
+  useEffect(() => {
+    if (!user) return;
+
+    const intervalId = setInterval(fetchAllData, SYNC_INTERVAL);
+
+    // Also sync on window focus
+    const handleFocus = () => {
+      fetchAllData();
+    };
+
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [user, fetchAllData]);
+
+  // Handlers
+  const handleCountryClick = useCallback((isoA3: string) => {
+    setSelection({ type: 'country', id: isoA3 });
+  }, []);
+
+  const handleCityClick = useCallback((cityId: string) => {
+    setSelection({ type: 'city', id: cityId });
+  }, []);
+
+  const handlePOIClick = useCallback((poiId: string) => {
+    setSelection({ type: 'poi', id: poiId });
+  }, []);
+
+  const handleMapClick = useCallback((lat: number, lng: number) => {
+    // Show POI form
+    setShowPOIForm({ lat, lng });
+  }, []);
+
+  const handleCloseSelection = useCallback(() => {
+    setSelection({ type: null, id: null });
+  }, []);
+
+  // Country flag toggle
+  const handleCountryFlagToggle = useCallback(async (isoA3: string, flag: 'want' | 'been', value: boolean) => {
+    if (!user) return;
+
+    setIsLoading(true);
+    try {
+      await setCountryFlag(isoA3, flag, value);
+
+      // Optimistic update
+      setCountriesState(prev => {
+        const existing = prev.find(s => s.iso_a3 === isoA3);
+        if (existing) {
+          return prev.map(s => {
+            if (s.iso_a3 !== isoA3) return s;
+            const flagKey = flag === 'want' ? 'want_by' : 'been_by';
+            return {
+              ...s,
+              [flagKey]: { ...s[flagKey], [user.id]: value },
+            };
+          });
+        } else {
+          const newState: CountryState = {
+            iso_a3: isoA3,
+            want_by: flag === 'want' ? { [user.id]: value } : {},
+            been_by: flag === 'been' ? { [user.id]: value } : {},
+          };
+          return [...prev, newState];
+        }
+      });
+
+      toast.success('Saved');
+    } catch (error) {
+      console.error('Error toggling country flag:', error);
+      toast.error('Failed to save');
+    }
+    setIsLoading(false);
+  }, [user, toast]);
+
+  // City flag toggle
+  const handleCityFlagToggle = useCallback(async (cityId: string, flag: 'want' | 'been', value: boolean) => {
+    if (!user) return;
+
+    setIsLoading(true);
+    try {
+      await setCityFlag(cityId, flag, value);
+
+      // Optimistic update
+      setCities(prev => prev.map(c => {
+        if (c.id !== cityId) return c;
+        const flagKey = flag === 'want' ? 'want_by' : 'been_by';
+        return {
+          ...c,
+          [flagKey]: { ...c[flagKey], [user.id]: value },
+        };
+      }));
+
+      toast.success('Saved');
+    } catch (error) {
+      console.error('Error toggling city flag:', error);
+      toast.error('Failed to save');
+    }
+    setIsLoading(false);
+  }, [user, toast]);
+
+  // City delete
+  const handleCityDelete = useCallback(async (cityId: string) => {
+    if (!user) return;
+
+    const city = cities.find(c => c.id === cityId);
+    if (!city || city.created_by !== user.id) {
+      toast.error('You can only delete cities you created');
+      return;
+    }
+
+    if (!confirm('Are you sure you want to delete this city?')) return;
+
+    setIsLoading(true);
+    try {
+      await deleteCity(cityId);
+      setCities(prev => prev.filter(c => c.id !== cityId));
+      setSelection({ type: null, id: null });
+      toast.success('City deleted');
+    } catch (error) {
+      console.error('Error deleting city:', error);
+      toast.error('Failed to delete city');
+    }
+    setIsLoading(false);
+  }, [user, cities, toast]);
+
+  // POI update
+  const handlePOIUpdate = useCallback(async (
+    poiId: string,
+    updates: {
+      label: string;
+      status: 'want' | 'been';
+      category_id: string | null;
+      priority: 'low' | 'med' | 'high' | null;
+      notes: string | null;
+      links: POILink[];
+    }
+  ) => {
+    if (!user) return;
+
+    const poi = pois.find(p => p.id === poiId);
+    if (!poi || poi.created_by !== user.id) {
+      toast.error('You can only edit POIs you created');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await updatePOIAsCreator(poiId, updates);
+
+      // Optimistic update
+      setPOIs(prev => prev.map(p => {
+        if (p.id !== poiId) return p;
+        return { ...p, ...updates };
+      }));
+
+      toast.success('Saved');
+    } catch (error) {
+      console.error('Error updating POI:', error);
+      toast.error('Failed to save');
+    }
+    setIsLoading(false);
+  }, [user, pois, toast]);
+
+  // POI endorse
+  const handlePOIEndorse = useCallback(async (poiId: string, value: boolean) => {
+    if (!user) return;
+
+    setIsLoading(true);
+    try {
+      await setPOIEndorsement(poiId, value);
+
+      // Optimistic update
+      setPOIs(prev => prev.map(p => {
+        if (p.id !== poiId) return p;
+        return {
+          ...p,
+          endorsed_by: { ...p.endorsed_by, [user.id]: value },
+        };
+      }));
+
+      toast.success(value ? 'Endorsed' : 'Endorsement removed');
+    } catch (error) {
+      console.error('Error endorsing POI:', error);
+      toast.error('Failed to save');
+    }
+    setIsLoading(false);
+  }, [user, toast]);
+
+  // POI delete
+  const handlePOIDelete = useCallback(async (poiId: string) => {
+    if (!user) return;
+
+    const poi = pois.find(p => p.id === poiId);
+    if (!poi || poi.created_by !== user.id) {
+      toast.error('You can only delete POIs you created');
+      return;
+    }
+
+    if (!confirm('Are you sure you want to delete this POI?')) return;
+
+    setIsLoading(true);
+    try {
+      await deletePOI(poiId);
+      setPOIs(prev => prev.filter(p => p.id !== poiId));
+      setSelection({ type: null, id: null });
+      toast.success('POI deleted');
+    } catch (error) {
+      console.error('Error deleting POI:', error);
+      toast.error('Failed to delete POI');
+    }
+    setIsLoading(false);
+  }, [user, pois, toast]);
+
+  // Create category
+  const handleCreateCategory = useCallback(async (name: string): Promise<Category | null> => {
+    if (!user) return null;
+
+    try {
+      const newCategory = await createCategory(name);
+      if (newCategory) {
+        setCategories(prev => [...prev, newCategory].sort((a, b) => a.name.localeCompare(b.name)));
+        toast.success('Category created');
+      }
+      return newCategory;
+    } catch (error) {
+      console.error('Error creating category:', error);
+      toast.error('Failed to create category');
+      return null;
+    }
+  }, [user, toast]);
+
+  // Add city from search
+  const handleSearchResultSelect = useCallback(async (result: GeocodingResult, type: 'city' | 'poi') => {
+    if (!user) return;
+
+    if (type === 'city') {
+      setIsLoading(true);
+      try {
+        // Find country ISO from coordinates using the countries GeoJSON
+        const countryIsoA3: string | null = null;
+        // For simplicity, we'll leave country lookup to the server or skip it
+
+        const newCity = await createCity({
+          name: result.name,
+          country_iso_a3: countryIsoA3,
+          lat: result.lat,
+          lng: result.lng,
+          want_by: { [user.id]: true },
+          been_by: {},
+        });
+
+        if (newCity) {
+          setCities(prev => [newCity, ...prev]);
+          setSelection({ type: 'city', id: newCity.id });
+          toast.success('City added');
+        }
+      } catch (error) {
+        console.error('Error creating city:', error);
+        toast.error('Failed to add city');
+      }
+      setIsLoading(false);
+    } else if (type === 'poi') {
+      // Show POI form with pre-filled location
+      setShowPOIForm({ lat: result.lat, lng: result.lng });
+    }
+  }, [user, toast]);
+
+  // Submit POI form
+  const handlePOIFormSubmit = useCallback(async (poi: {
+    label: string;
+    lat: number;
+    lng: number;
+    status: 'want' | 'been';
+    category_id: string | null;
+    priority: 'low' | 'med' | 'high' | null;
+    notes: string | null;
+    links: POILink[];
+  }) => {
+    if (!user) return;
+
+    setIsLoading(true);
+    try {
+      const newPOI = await createPOI({
+        ...poi,
+        country_iso_a3: null,
+        city_id: null,
+      });
+
+      if (newPOI) {
+        setPOIs(prev => [newPOI, ...prev]);
+        setShowPOIForm(null);
+        setSelection({ type: 'poi', id: newPOI.id });
+        toast.success('POI added');
+      }
+    } catch (error) {
+      console.error('Error creating POI:', error);
+      toast.error('Failed to add POI');
+    }
+    setIsLoading(false);
+  }, [user, toast]);
+
+  // Show auth screen if not logged in
+  if (isAuthChecking) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-spinner" />
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Auth onAuthSuccess={() => {}} />;
+  }
+
+  return (
+    <div className="app">
+      <TravelMap
+        user={user}
+        otherUser={otherUser}
+        countriesState={countriesState}
+        cities={cities}
+        pois={pois}
+        filters={filters}
+        layers={layers}
+        selection={selection}
+        onCountryClick={handleCountryClick}
+        onCityClick={handleCityClick}
+        onPOIClick={handlePOIClick}
+        onMapClick={handleMapClick}
+      />
+
+      <LeftPanel
+        user={user}
+        otherUser={otherUser}
+        filters={filters}
+        layers={layers}
+        categories={categories}
+        worldCities={worldCities}
+        onFiltersChange={setFilters}
+        onLayersChange={setLayers}
+        onSearchResultSelect={handleSearchResultSelect}
+      />
+
+      <RightPanel
+        user={user}
+        otherUser={otherUser}
+        selection={selection}
+        countriesState={countriesState}
+        cities={cities}
+        pois={pois}
+        categories={categories}
+        countriesGeoJSON={countriesGeoJSON}
+        onClose={handleCloseSelection}
+        onCountryFlagToggle={handleCountryFlagToggle}
+        onCityFlagToggle={handleCityFlagToggle}
+        onCityDelete={handleCityDelete}
+        onPOIUpdate={handlePOIUpdate}
+        onPOIEndorse={handlePOIEndorse}
+        onPOIDelete={handlePOIDelete}
+        onCreateCategory={handleCreateCategory}
+      />
+
+      {showPOIForm && (
+        <POIForm
+          lat={showPOIForm.lat}
+          lng={showPOIForm.lng}
+          categories={categories}
+          onSubmit={handlePOIFormSubmit}
+          onCancel={() => setShowPOIForm(null)}
+          onCreateCategory={handleCreateCategory}
+        />
+      )}
+
+      <ToastContainer toasts={toast.toasts} onDismiss={toast.dismissToast} />
+
+      {isLoading && (
+        <div className="loading-overlay">
+          <div className="loading-spinner small" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;

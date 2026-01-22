@@ -1,0 +1,518 @@
+.right-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 360px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(10px);
+  box-shadow: -2px 0 20px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.close-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #F3F4F6;
+  border-radius: 50%;
+  font-size: 20px;
+  color: #6B7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.close-btn:hover {
+  background: #E5E7EB;
+  color: #1F2937;
+}
+
+.details-content {
+  padding: 24px;
+}
+
+.details-header {
+  margin-bottom: 20px;
+  padding-right: 40px;
+}
+
+.details-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: #1F2937;
+}
+
+.details-type {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #F3F4F6;
+  color: #6B7280;
+}
+
+.creator-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  background: #DBEAFE;
+  color: #1D4ED8;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 16px;
+}
+
+/* Status Section */
+.status-section {
+  margin-bottom: 20px;
+}
+
+.status-section h3,
+.other-status h3,
+.notes-section h3,
+.links-section h3,
+.endorsement-section h3 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.status-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.status-btn {
+  flex: 1;
+  padding: 12px 16px;
+  border: 2px solid #E5E7EB;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #4B5563;
+  background: white;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.status-btn:hover {
+  border-color: #D1D5DB;
+  background: #F9FAFB;
+}
+
+.status-btn.active.want {
+  border-color: #FCD34D;
+  background: #FFFBEB;
+  color: #B45309;
+}
+
+.status-btn.active.been {
+  border-color: #34D399;
+  background: #ECFDF5;
+  color: #047857;
+}
+
+/* Other Status */
+.other-status {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: #F9FAFB;
+  border-radius: 8px;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge {
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge.want {
+  color: #1F2937;
+}
+
+.badge.been {
+  color: #1F2937;
+}
+
+.badge.none {
+  background: #F3F4F6;
+  color: #9CA3AF;
+}
+
+/* POI Meta */
+.poi-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.status-badge {
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-badge.want {
+  background: #FFFBEB;
+  color: #B45309;
+}
+
+.status-badge.been {
+  background: #ECFDF5;
+  color: #047857;
+}
+
+.priority-badge {
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.priority-badge.high {
+  background: #FEE2E2;
+  color: #B91C1C;
+}
+
+.priority-badge.med {
+  background: #FEF3C7;
+  color: #B45309;
+}
+
+.priority-badge.low {
+  background: #E5E7EB;
+  color: #4B5563;
+}
+
+.category-badge {
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+/* Creator Info */
+.creator-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #6B7280;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.creator-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* Notes Section */
+.notes-section {
+  margin-bottom: 20px;
+}
+
+.notes-section p {
+  margin: 0;
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* Links Section */
+.links-section {
+  margin-bottom: 20px;
+}
+
+.links-section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.links-section li {
+  margin-bottom: 6px;
+}
+
+.links-section a {
+  color: #3B82F6;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.links-section a:hover {
+  text-decoration: underline;
+}
+
+/* Endorsement Section */
+.endorsement-section {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: #F9FAFB;
+  border-radius: 8px;
+}
+
+.endorsement-status {
+  font-size: 14px;
+}
+
+.endorsement-status .endorsed {
+  font-weight: 500;
+}
+
+.endorsement-status .not-endorsed {
+  color: #9CA3AF;
+}
+
+.endorse-btn {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid #8B5CF6;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #8B5CF6;
+  background: white;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.endorse-btn:hover {
+  background: #F5F3FF;
+}
+
+.endorse-btn.endorsed {
+  background: #8B5CF6;
+  color: white;
+}
+
+/* Actions Section */
+.actions-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid #E5E7EB;
+  margin-top: 20px;
+}
+
+.edit-btn {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+  background: #3B82F6;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.edit-btn:hover {
+  background: #2563EB;
+}
+
+.delete-btn {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid #FCA5A5;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #B91C1C;
+  background: white;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.delete-btn:hover {
+  background: #FEE2E2;
+  border-color: #F87171;
+}
+
+/* Edit Mode */
+.edit-mode {
+  background: #F9FAFB;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #4B5563;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 10px 12px;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  border-color: #3B82F6;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.new-category,
+.new-link {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.new-category input,
+.new-link input {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.new-category button,
+.new-link button {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  background: #3B82F6;
+  color: white;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.new-category button:hover,
+.new-link button:hover {
+  background: #2563EB;
+}
+
+.links-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.link-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: white;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.link-item span {
+  font-weight: 500;
+}
+
+.link-item a {
+  flex: 1;
+  color: #3B82F6;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remove-link {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: #FEE2E2;
+  border-radius: 4px;
+  color: #B91C1C;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.save-btn {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  background: #10B981;
+  color: white;
+  cursor: pointer;
+}
+
+.save-btn:hover {
+  background: #059669;
+}
+
+.cancel-btn {
+  flex: 1;
+  padding: 12px 16px;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  background: white;
+  color: #4B5563;
+  cursor: pointer;
+}
+
+.cancel-btn:hover {
+  background: #F3F4F6;
+}
