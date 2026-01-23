@@ -4,6 +4,7 @@ import type { Map, GeoJSONSource, MapMouseEvent, LngLatLike } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { CountryState, City, POI, User, FilterState, LayerVisibility, Selection } from '../types';
 import { USER_COLORS } from '../types';
+import area from '@turf/area';
 
 interface TravelMapProps {
   user: User;
@@ -447,7 +448,8 @@ export function TravelMap({
       const countriesGeoJSON: GeoJSON.FeatureCollection = await response.json();
 
       // Merge with state and apply styling - include ALL countries
-      const styledFeatures = countriesGeoJSON.features
+      const sortedFeatures = [...countriesGeoJSON.features].sort((a, b) => area(b as any) - area(a as any));
+      const styledFeatures = sortedFeatures
         .map(feature => {
           const isoA3 = feature.properties?.iso_a3;
           if (!isoA3) return null;
