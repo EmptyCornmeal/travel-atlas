@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { CountryState, City, POI, Category, User, Selection, POILink } from '../types';
+import type { GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
 import './RightPanel.css';
 
@@ -7,12 +8,17 @@ interface RightPanelProps {
   user: User;
   otherUser: User | null;
   selection: Selection;
+  searchResult: GeocodingResult | null;
   countriesState: CountryState[];
   cities: City[];
   pois: POI[];
   categories: Category[];
   countriesGeoJSON: GeoJSON.FeatureCollection | null;
   onClose: () => void;
+  onSearchResultAdd: (result: GeocodingResult, type: 'city' | 'poi') => void;
+  onSearchResultClear: () => void;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
   onCountryFlagToggle: (isoA3: string, flag: 'want' | 'been', value: boolean) => void;
   onCityFlagToggle: (cityId: string, flag: 'want' | 'been', value: boolean) => void;
   onCityDelete: (cityId: string) => void;
@@ -33,12 +39,17 @@ export function RightPanel({
   user,
   otherUser,
   selection,
+  searchResult,
   countriesState,
   cities,
   pois,
   categories,
   countriesGeoJSON,
   onClose,
+  onSearchResultAdd,
+  onSearchResultClear,
+  isCollapsed,
+  onToggleCollapse,
   onCountryFlagToggle,
   onCityFlagToggle,
   onCityDelete,
@@ -47,47 +58,157 @@ export function RightPanel({
   onPOIDelete,
   onCreateCategory,
 }: RightPanelProps) {
-  if (!selection.type || !selection.id) return null;
+  const hasSelection = !!selection.type && !!selection.id;
+  const hasSearchResult = !!searchResult;
+
+  if (!hasSelection && !hasSearchResult) return null;
+
+  const selectionSummary = getSelectionSummary({
+    selection,
+    cities,
+    pois,
+    countriesGeoJSON,
+  });
 
   return (
-    <div className="right-panel">
+    <div className={`right-panel ${isCollapsed ? 'collapsed' : ''}`}>
       <button className="close-btn" onClick={onClose}>×</button>
+      <button className="collapse-btn" onClick={onToggleCollapse} aria-label="Toggle panel size">
+        {isCollapsed ? '⟨' : '⟩'}
+      </button>
 
-      {selection.type === 'country' && (
-        <CountryDetails
-          isoA3={selection.id}
-          user={user}
-          otherUser={otherUser}
-          countriesState={countriesState}
-          countriesGeoJSON={countriesGeoJSON}
-          onFlagToggle={onCountryFlagToggle}
-        />
-      )}
+      {isCollapsed ? (
+        <div className="collapsed-summary">
+          <div className="details-header">
+            <h2>{hasSearchResult ? searchResult?.name : selectionSummary?.title}</h2>
+            <span className="details-type">
+              {hasSearchResult ? 'Search result' : selectionSummary?.typeLabel}
+            </span>
+          </div>
+          <p className="collapsed-note">
+            {hasSearchResult
+              ? searchResult?.displayName
+              : selectionSummary?.subtitle || 'Expand for details'}
+          </p>
+        </div>
+      ) : (
+        <>
+          {hasSearchResult && searchResult && (
+            <SearchDetails
+              result={searchResult}
+              onAdd={onSearchResultAdd}
+              onClear={onSearchResultClear}
+            />
+          )}
 
-      {selection.type === 'city' && (
-        <CityDetails
-          cityId={selection.id}
-          user={user}
-          otherUser={otherUser}
-          cities={cities}
-          onFlagToggle={onCityFlagToggle}
-          onDelete={onCityDelete}
-        />
-      )}
+          {selection.type === 'country' && (
+            <CountryDetails
+              isoA3={selection.id}
+              user={user}
+              otherUser={otherUser}
+              countriesState={countriesState}
+              countriesGeoJSON={countriesGeoJSON}
+              onFlagToggle={onCountryFlagToggle}
+            />
+          )}
 
-      {selection.type === 'poi' && (
-        <POIDetails
-          poiId={selection.id}
-          user={user}
-          otherUser={otherUser}
-          pois={pois}
-          categories={categories}
-          onUpdate={onPOIUpdate}
-          onEndorse={onPOIEndorse}
-          onDelete={onPOIDelete}
-          onCreateCategory={onCreateCategory}
-        />
+          {selection.type === 'city' && (
+            <CityDetails
+              cityId={selection.id}
+              user={user}
+              otherUser={otherUser}
+              cities={cities}
+              onFlagToggle={onCityFlagToggle}
+              onDelete={onCityDelete}
+            />
+          )}
+
+          {selection.type === 'poi' && (
+            <POIDetails
+              poiId={selection.id}
+              user={user}
+              otherUser={otherUser}
+              pois={pois}
+              categories={categories}
+              onUpdate={onPOIUpdate}
+              onEndorse={onPOIEndorse}
+              onDelete={onPOIDelete}
+              onCreateCategory={onCreateCategory}
+            />
+          )}
+        </>
       )}
+    </div>
+  );
+}
+
+function getSelectionSummary({
+  selection,
+  cities,
+  pois,
+  countriesGeoJSON,
+}: {
+  selection: Selection;
+  cities: City[];
+  pois: POI[];
+  countriesGeoJSON: GeoJSON.FeatureCollection | null;
+}): { title: string; subtitle?: string; typeLabel: string } | null {
+  if (!selection.type || !selection.id) return null;
+  if (selection.type === 'city') {
+    const city = cities.find(c => c.id === selection.id);
+    return { title: city?.name || 'City', typeLabel: 'City' };
+  }
+  if (selection.type === 'poi') {
+    const poi = pois.find(p => p.id === selection.id);
+    return { title: poi?.label || 'POI', typeLabel: 'POI' };
+  }
+  const countryFeature = countriesGeoJSON?.features.find(
+    f => f.properties?.iso_a3 === selection.id
+  );
+  return {
+    title: countryFeature?.properties?.name || selection.id,
+    typeLabel: 'Country',
+  };
+}
+
+function SearchDetails({
+  result,
+  onAdd,
+  onClear,
+}: {
+  result: GeocodingResult;
+  onAdd: (result: GeocodingResult, type: 'city' | 'poi') => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="details-content">
+      <div className="details-header">
+        <h2>{result.name}</h2>
+        <span className="details-type">Search result</span>
+      </div>
+
+      <div className="search-meta">
+        <div className="search-meta-row">
+          <span className="meta-label">Location</span>
+          <span className="meta-value">{result.displayName}</span>
+        </div>
+        <div className="search-meta-row">
+          <span className="meta-label">Type</span>
+          <span className={`result-type type-${result.type}`}>{result.type}</span>
+        </div>
+      </div>
+
+      <div className="search-actions">
+        <button className="primary-action" onClick={() => { onAdd(result, 'city'); onClear(); }}>
+          Add city
+        </button>
+        <button className="secondary-action" onClick={() => { onAdd(result, 'poi'); onClear(); }}>
+          Add POI
+        </button>
+        <button className="tertiary-action" onClick={onClear}>
+          Dismiss
+        </button>
+      </div>
     </div>
   );
 }
@@ -130,13 +251,13 @@ function CountryDetails({
         <h3>Your Status</h3>
         <div className="status-buttons">
           <button
-            className={`status-btn ${userWant ? 'active want' : ''}`}
+            className={`status-chip ${userWant ? 'active want' : ''}`}
             onClick={() => onFlagToggle(isoA3, 'want', !userWant)}
           >
             {userWant ? '✓' : ''} Want to visit
           </button>
           <button
-            className={`status-btn ${userBeen ? 'active been' : ''}`}
+            className={`status-chip ${userBeen ? 'active been' : ''}`}
             onClick={() => onFlagToggle(isoA3, 'been', !userBeen)}
           >
             {userBeen ? '✓' : ''} Have visited
@@ -208,13 +329,13 @@ function CityDetails({
         <h3>Your Status</h3>
         <div className="status-buttons">
           <button
-            className={`status-btn ${userWant ? 'active want' : ''}`}
+            className={`status-chip ${userWant ? 'active want' : ''}`}
             onClick={() => onFlagToggle(cityId, 'want', !userWant)}
           >
             {userWant ? '✓' : ''} Want to visit
           </button>
           <button
-            className={`status-btn ${userBeen ? 'active been' : ''}`}
+            className={`status-chip ${userBeen ? 'active been' : ''}`}
             onClick={() => onFlagToggle(cityId, 'been', !userBeen)}
           >
             {userBeen ? '✓' : ''} Have visited
@@ -245,9 +366,12 @@ function CityDetails({
 
       {isCreator && (
         <div className="actions-section">
-          <button className="delete-btn" onClick={() => onDelete(cityId)}>
-            Delete City
-          </button>
+          <details className="danger-zone">
+            <summary>Danger zone</summary>
+            <button className="delete-btn" onClick={() => onDelete(cityId)}>
+              Delete City
+            </button>
+          </details>
         </div>
       )}
     </div>
@@ -546,9 +670,12 @@ function POIDetails({
           <button className="edit-btn" onClick={() => setIsEditing(true)}>
             Edit POI
           </button>
-          <button className="delete-btn" onClick={() => onDelete(poiId)}>
-            Delete POI
-          </button>
+          <details className="danger-zone">
+            <summary>Danger zone</summary>
+            <button className="delete-btn" onClick={() => onDelete(poiId)}>
+              Delete POI
+            </button>
+          </details>
         </div>
       )}
     </div>
