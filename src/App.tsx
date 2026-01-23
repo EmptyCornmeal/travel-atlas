@@ -730,7 +730,7 @@ function App() {
       {isAdmin && (
         <div className="topbar">
           <div className="topbar-left">
-            <span className="brand">Travel Atlas</span>
+            <span className="brand">Travel Atlas · build 3303252</span>
             <span className={`badge badge-${actingUser?.color || 'blue'}`}>
               {actingUser?.name || '—'}
             </span>
