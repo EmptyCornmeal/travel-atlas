@@ -3,7 +3,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import type { CountryState, City, POI, Category, POILink, User } from '../types';
 
-
 // =========================
 // Supabase config
 // =========================
@@ -24,6 +23,21 @@ if (userConfigStr) {
 }
 
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ---- ADD THIS HELPER (near top is fine) ----
+function isAbortError(err: any): boolean {
+  const name = err?.name ?? '';
+  const msg = String(err?.message ?? '');
+  const details = String(err?.details ?? '');
+
+  return (
+    name === 'AbortError' ||
+    msg.includes('AbortError') ||
+    msg.includes('signal is aborted') ||
+    details.includes('AbortError') ||
+    details.includes('signal is aborted')
+  );
+}
 
 // =========================
 // User helpers
@@ -107,6 +121,7 @@ export async function getOtherUser(currentEmail: string): Promise<User | null> {
 export async function fetchCountriesState(): Promise<CountryState[]> {
   const { data, error } = await supabase.from('countries_state').select('*');
   if (error) {
+    if (isAbortError(error)) return [];
     console.error('Error fetching countries state:', error);
     return [];
   }
@@ -140,6 +155,7 @@ export async function fetchCities(): Promise<City[]> {
     .order('created_at', { ascending: false });
 
   if (error) {
+    if (isAbortError(error)) return [];
     console.error('Error fetching cities:', error);
     return [];
   }
@@ -196,9 +212,13 @@ export async function deleteCity(city_id: string): Promise<void> {
 // POIs
 // =========================
 export async function fetchPOIs(): Promise<POI[]> {
-  const { data, error } = await supabase.from('pois').select('*').order('created_at', { ascending: false });
+  const { data, error } = await supabase
+    .from('pois')
+    .select('*')
+    .order('created_at', { ascending: false });
 
   if (error) {
+    if (isAbortError(error)) return [];
     console.error('Error fetching POIs:', error);
     return [];
   }
@@ -278,6 +298,7 @@ export async function fetchCategories(): Promise<Category[]> {
   const { data, error } = await supabase.from('categories').select('*').order('name');
 
   if (error) {
+    if (isAbortError(error)) return [];
     console.error('Error fetching categories:', error);
     return [];
   }
