@@ -77,6 +77,7 @@ export function TravelMap({
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<Map | null>(null);
   const loaded = useRef(false);
+  const clusterPopup = useRef<maplibregl.Popup | null>(null);
 
   const getSmallestCountryFeature = useCallback((features?: MapGeoJSONFeature[]) => {
     if (!features?.length) return undefined;
@@ -366,6 +367,7 @@ export function TravelMap({
       mapInstance.on('click', layerId, (e: MapMouseEvent) => {
         const smallestFeature = getSmallestCountryFeature((e as any).features);
         if (smallestFeature?.properties?.iso_a3) {
+          clusterPopup.current?.remove();
           onCountryClick(smallestFeature.properties.iso_a3);
         }
       });
@@ -373,6 +375,7 @@ export function TravelMap({
 
     mapInstance.on('click', 'cities-circle', (e: MapMouseEvent) => {
       e.originalEvent.stopPropagation();
+      clusterPopup.current?.remove();
      const feature = (e as any).features?.[0];
       if (feature?.properties?.id) {
         onCityClick(feature.properties.id);
@@ -381,6 +384,7 @@ export function TravelMap({
 
     mapInstance.on('click', 'pois-point', (e: MapMouseEvent) => {
       e.originalEvent.stopPropagation();
+      clusterPopup.current?.remove();
      const feature = (e as any).features?.[0];
       if (feature?.properties?.id) {
         onPOIClick(feature.properties.id);
@@ -388,18 +392,56 @@ export function TravelMap({
     });
 
     mapInstance.on('click', 'pois-cluster', (e: MapMouseEvent) => {
+      e.originalEvent.stopPropagation();
       const features = mapInstance.queryRenderedFeatures(e.point, {
         layers: ['pois-cluster'],
       });
       const clusterId = features[0]?.properties?.cluster_id;
+      if (clusterId === undefined) return;
       const source = mapInstance.getSource('pois') as GeoJSONSource;
-      source.getClusterExpansionZoom(clusterId, (err, zoom) => {
-        if (err) return;
+      source.getClusterLeaves(clusterId, 10, 0, (err, leafFeatures) => {
+        if (err || !leafFeatures) return;
         const coords = (features[0].geometry as GeoJSON.Point).coordinates as LngLatLike;
-        mapInstance.easeTo({
-          center: coords,
-          zoom: zoom!,
+        const container = document.createElement('div');
+        container.className = 'cluster-popup';
+
+        const title = document.createElement('div');
+        title.className = 'cluster-popup-title';
+        const pointCount = features[0]?.properties?.point_count ?? leafFeatures.length;
+        title.textContent = `Select a place (${pointCount})`;
+        container.appendChild(title);
+
+        const list = document.createElement('ul');
+        list.className = 'cluster-popup-list';
+        leafFeatures.forEach(feature => {
+          const id = feature.properties?.id;
+          if (!id) return;
+          const label = feature.properties?.label || 'POI';
+          const item = document.createElement('li');
+          const button = document.createElement('button');
+          button.className = 'cluster-popup-btn';
+          button.textContent = label;
+          button.addEventListener('click', () => {
+            onPOIClick(String(id));
+            clusterPopup.current?.remove();
+          });
+          item.appendChild(button);
+          list.appendChild(item);
         });
+        container.appendChild(list);
+
+        if (leafFeatures.length < pointCount) {
+          const note = document.createElement('div');
+          note.className = 'cluster-popup-note';
+          note.textContent = 'Zoom in for more items.';
+          container.appendChild(note);
+        }
+
+        clusterPopup.current?.remove();
+        clusterPopup.current = new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+          .setLngLat(coords)
+          .setDOMContent(container)
+          .addTo(mapInstance);
       });
     });
 
@@ -411,6 +453,7 @@ export function TravelMap({
       });
 
       if (features.length === 0) {
+        clusterPopup.current?.remove();
         onMapClick(e.lngLat.lat, e.lngLat.lng);
       }
     });

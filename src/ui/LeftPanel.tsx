@@ -24,8 +24,9 @@ interface LeftPanelProps {
   worldCities: GeoJSON.FeatureCollection | null;
   onFiltersChange: (filters: FilterState) => void;
   onLayersChange: (layers: LayerVisibility) => void;
-  onSearchResultSelect: (result: GeocodingResult, type: 'city' | 'poi') => void;
+  onSearchResultPreview: (result: GeocodingResult) => void;
   onCountrySelect: (isoA3: string, bbox: [number, number, number, number]) => void;
+  onSearchReset: () => void;
 }
 
 export function LeftPanel({
@@ -38,14 +39,15 @@ export function LeftPanel({
   worldCities,
   onFiltersChange,
   onLayersChange,
-  onSearchResultSelect,
+  onSearchResultPreview,
   onCountrySelect,
+  onSearchReset,
 }: LeftPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [countryResults, setCountryResults] = useState<CountrySearchResult[]>([]);
   const [searchResults, setSearchResults] = useState<GeocodingResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [showAddOptions, setShowAddOptions] = useState<GeocodingResult | null>(null);
+  const [activeTab, setActiveTab] = useState<'filters' | 'legend'>('filters');
 
   const normalizeCoordinates = (coords: number[]): { lat: number; lng: number } | null => {
     if (coords.length < 2) return null;
@@ -136,17 +138,18 @@ export function LeftPanel({
       });
     }
 
-    // If we have local results, show them
-    if (localResults.length > 0) {
-      setSearchResults(localResults.slice(0, 10));
-    }
-
     // Also search Nominatim for more results
     try {
       const nominatimResults = await searchPlaces(query, 5);
-      // Combine results, prioritizing local cities
-      const combined = [...localResults.slice(0, 5), ...nominatimResults];
-      setSearchResults(combined.slice(0, 10));
+      // Combine results, prioritizing local cities and deduping
+      const combined = [...localResults, ...nominatimResults];
+      const deduped = combined.filter((result, index, all) => {
+        const key = `${result.name.toLowerCase()}|${result.country?.toLowerCase() || ''}|${result.type}`;
+        return all.findIndex(r =>
+          `${r.name.toLowerCase()}|${r.country?.toLowerCase() || ''}|${r.type}` === key
+        ) === index;
+      });
+      setSearchResults(deduped.slice(0, 10));
     } catch (error) {
       console.error('Search error:', error);
       // Keep local results if Nominatim fails
@@ -176,15 +179,14 @@ export function LeftPanel({
   };
 
   const handleResultClick = (result: GeocodingResult) => {
-    setShowAddOptions(result);
+    onSearchResultPreview(result);
   };
 
-  const handleAddAs = (result: GeocodingResult, type: 'city' | 'poi') => {
-    onSearchResultSelect(result, type);
-    setShowAddOptions(null);
+  const handleClearSearch = () => {
     setSearchQuery('');
     setCountryResults([]);
     setSearchResults([]);
+    onSearchReset();
   };
 
   const handleFilterChange = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
@@ -213,13 +215,20 @@ export function LeftPanel({
 
       {/* Search */}
       <div className="search-section">
-        <input
-          type="text"
-          placeholder="Search countries, cities, or places..."
-          value={searchQuery}
-          onChange={handleSearchChange}
-          className="search-input"
-        />
+        <div className="search-field">
+          <input
+            type="text"
+            placeholder="Search countries, cities, or places..."
+            value={searchQuery}
+            onChange={handleSearchChange}
+            className="search-input"
+          />
+          {searchQuery && (
+            <button className="search-clear-btn" onClick={handleClearSearch} aria-label="Reset search">
+              ×
+            </button>
+          )}
+        </div>
         {isSearching && <div className="search-loading">Searching...</div>}
 
         {(countryResults.length > 0 || searchResults.length > 0) && (
@@ -237,28 +246,11 @@ export function LeftPanel({
             {/* City/place results */}
             {searchResults.map(result => (
               <li key={result.id} className="search-result-item">
-                {showAddOptions?.id === result.id ? (
-                  <div className="add-options">
-                    <span className="result-name">{result.displayName}</span>
-                    <div className="add-buttons">
-                      <button onClick={() => handleAddAs(result, 'city')} className="add-btn add-city">
-                        + City
-                      </button>
-                      <button onClick={() => handleAddAs(result, 'poi')} className="add-btn add-poi">
-                        + POI
-                      </button>
-                      <button onClick={() => setShowAddOptions(null)} className="add-btn cancel">
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button onClick={() => handleResultClick(result)} className="result-btn">
-                    <span className="result-name">{result.name}</span>
-                    <span className="result-detail">{result.country || result.displayName}</span>
-                    <span className={`result-type type-${result.type}`}>{result.type}</span>
-                  </button>
-                )}
+                <button onClick={() => handleResultClick(result)} className="result-btn">
+                  <span className="result-name">{result.name}</span>
+                  <span className="result-detail">{result.country || result.displayName}</span>
+                  <span className={`result-type type-${result.type}`}>{result.type}</span>
+                </button>
               </li>
             ))}
           </ul>
@@ -296,98 +288,119 @@ export function LeftPanel({
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="section">
-        <h3>Filters</h3>
+      <div className="section panel-tabs">
+        <button
+          className={`panel-tab ${activeTab === 'filters' ? 'active' : ''}`}
+          onClick={() => setActiveTab('filters')}
+        >
+          Filters
+        </button>
+        <button
+          className={`panel-tab ${activeTab === 'legend' ? 'active' : ''}`}
+          onClick={() => setActiveTab('legend')}
+        >
+          Legend
+        </button>
+      </div>
 
-        <div className="filter-group">
-          <label>Who</label>
-          <select
-            value={filters.who}
-            onChange={e => handleFilterChange('who', e.target.value as FilterState['who'])}
-          >
-            <option value="all">Everyone</option>
-            <option value="mine">Mine only</option>
-            <option value="theirs">{otherUser?.name || 'Theirs'} only</option>
-            <option value="both">Both</option>
-          </select>
+      {activeTab === 'filters' && (
+        <div className="section filter-sections">
+          <details className="filter-section" open>
+            <summary>People & status</summary>
+            <div className="filter-group">
+              <label>Who</label>
+              <select
+                value={filters.who}
+                onChange={e => handleFilterChange('who', e.target.value as FilterState['who'])}
+              >
+                <option value="all">Everyone</option>
+                <option value="mine">Mine only</option>
+                <option value="theirs">{otherUser?.name || 'Theirs'} only</option>
+                <option value="both">Both</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label>Status</label>
+              <select
+                value={filters.status}
+                onChange={e => handleFilterChange('status', e.target.value as FilterState['status'])}
+              >
+                <option value="all">All</option>
+                <option value="want">Want to visit</option>
+                <option value="been">Have visited</option>
+              </select>
+            </div>
+          </details>
+
+          <details className="filter-section" open>
+            <summary>POI details</summary>
+            <div className="filter-group">
+              <label>Priority (POIs)</label>
+              <select
+                value={filters.priority}
+                onChange={e => handleFilterChange('priority', e.target.value as FilterState['priority'])}
+              >
+                <option value="all">All</option>
+                <option value="high">High</option>
+                <option value="med">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+
+            {categories.length > 0 && (
+              <div className="filter-group">
+                <label>Categories (POIs)</label>
+                <div className="category-chips">
+                  {categories.map(cat => (
+                    <button
+                      key={cat.id}
+                      className={`category-chip ${filters.categories.includes(cat.id) ? 'active' : ''}`}
+                      onClick={() => handleCategoryToggle(cat.id)}
+                    >
+                      {cat.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </details>
         </div>
+      )}
 
-        <div className="filter-group">
-          <label>Status</label>
-          <select
-            value={filters.status}
-            onChange={e => handleFilterChange('status', e.target.value as FilterState['status'])}
-          >
-            <option value="all">All</option>
-            <option value="want">Want to visit</option>
-            <option value="been">Have visited</option>
-          </select>
-        </div>
+      {activeTab === 'legend' && (
+        <div className="section legend">
+          <h3>Legend</h3>
 
-        <div className="filter-group">
-          <label>Priority (POIs)</label>
-          <select
-            value={filters.priority}
-            onChange={e => handleFilterChange('priority', e.target.value as FilterState['priority'])}
-          >
-            <option value="all">All</option>
-            <option value="high">High</option>
-            <option value="med">Medium</option>
-            <option value="low">Low</option>
-          </select>
-        </div>
-
-        {categories.length > 0 && (
-          <div className="filter-group">
-            <label>Categories (POIs)</label>
-            <div className="category-chips">
-              {categories.map(cat => (
-                <button
-                  key={cat.id}
-                  className={`category-chip ${filters.categories.includes(cat.id) ? 'active' : ''}`}
-                  onClick={() => handleCategoryToggle(cat.id)}
-                >
-                  {cat.name}
-                </button>
-              ))}
+          <div className="legend-group">
+            <span className="legend-title">Color = Who</span>
+            <div className="legend-item">
+              <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.blue.solid }}></span>
+              <span>{user.color === 'blue' ? user.name : otherUser?.name || 'Myles'}</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.red.solid }}></span>
+              <span>{user.color === 'red' ? user.name : otherUser?.name || 'Viktoria'}</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.purple.solid }}></span>
+              <span>Both</span>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Legend */}
-      <div className="section legend">
-        <h3>Legend</h3>
-
-        <div className="legend-group">
-          <span className="legend-title">Color = Who</span>
-          <div className="legend-item">
-            <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.blue.solid }}></span>
-            <span>{user.color === 'blue' ? user.name : otherUser?.name || 'Myles'}</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.red.solid }}></span>
-            <span>{user.color === 'red' ? user.name : otherUser?.name || 'Viktoria'}</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.purple.solid }}></span>
-            <span>Both</span>
+          <div className="legend-group">
+            <span className="legend-title">Fill = Status</span>
+            <div className="legend-item">
+              <span className="legend-swatch solid"></span>
+              <span>Have visited</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-swatch hatched"></span>
+              <span>Want to visit</span>
+            </div>
           </div>
         </div>
-
-        <div className="legend-group">
-          <span className="legend-title">Fill = Status</span>
-          <div className="legend-item">
-            <span className="legend-swatch solid"></span>
-            <span>Have visited</span>
-          </div>
-          <div className="legend-item">
-            <span className="legend-swatch hatched"></span>
-            <span>Want to visit</span>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

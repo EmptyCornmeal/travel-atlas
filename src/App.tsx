@@ -28,9 +28,11 @@ import { POIForm } from './ui/POIForm';
 import { ToastContainer, useToasts } from './ui/Toast';
 import './App.css';
 import { findCountryIsoA3 } from './utils/geo';
+import { USER_COLORS } from './types';
 
 // Sync interval (15 seconds)
 const SYNC_INTERVAL = 15000;
+const DEFAULT_VIEW = { lat: 45, lng: 10, zoom: 3 };
 
 // =========================
 // Admin setup mode
@@ -72,12 +74,14 @@ function App() {
     pois: true,
   });
   const [selection, setSelection] = useState<Selection>({ type: null, id: null });
+  const [searchSelection, setSearchSelection] = useState<GeocodingResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showPOIForm, setShowPOIForm] = useState<{ lat: number; lng: number } | null>(null);
   const [focusCountry, setFocusCountry] = useState<{ isoA3: string; bbox: [number, number, number, number] } | null>(
     null
   );
   const [focusLocation, setFocusLocation] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
+  const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
 
   // Admin UI state (persist on this device)
   const [adminMode, setAdminMode] = useState<boolean>(() => localStorage.getItem(LS_ADMIN_MODE) === '1');
@@ -365,22 +369,27 @@ function App() {
   // Handlers
   const handleCountryClick = useCallback((isoA3: string) => {
     setSelection({ type: 'country', id: isoA3 });
+    setSearchSelection(null);
   }, []);
 
   const handleCityClick = useCallback((cityId: string) => {
     setSelection({ type: 'city', id: cityId });
+    setSearchSelection(null);
   }, []);
 
   const handlePOIClick = useCallback((poiId: string) => {
     setSelection({ type: 'poi', id: poiId });
+    setSearchSelection(null);
   }, []);
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
     setShowPOIForm({ lat, lng });
+    setSearchSelection(null);
   }, []);
 
   const handleCloseSelection = useCallback(() => {
     setSelection({ type: null, id: null });
+    setSearchSelection(null);
   }, []);
 
   // Country select from search (zoom and select)
@@ -388,6 +397,7 @@ function App() {
     setSelection({ type: 'country', id: isoA3 });
     setFocusCountry({ isoA3, bbox });
     setTimeout(() => setFocusCountry(null), 800);
+    setSearchSelection(null);
   }, []);
 
   // Country flag toggle with mutual exclusivity (been turns off want)
@@ -621,6 +631,7 @@ function App() {
   const handleSearchResultSelect = useCallback(async (result: GeocodingResult, type: 'city' | 'poi') => {
     if (!user) return;
 
+    setSearchSelection(null);
     if (type === 'city') {
       setIsLoading(true);
       try {
@@ -653,6 +664,22 @@ function App() {
       setShowPOIForm({ lat: result.lat, lng: result.lng });
     }
   }, [user, countriesGeoJSON, toast]);
+
+  const handleSearchResultPreview = useCallback((result: GeocodingResult) => {
+    setSearchSelection(result);
+    setSelection({ type: null, id: null });
+    setIsRightPanelCollapsed(false);
+  }, []);
+
+  const handleSearchReset = useCallback(() => {
+    setSearchSelection(null);
+  }, []);
+
+  const handleResetView = useCallback(() => {
+    setFocusCountry(null);
+    setFocusLocation(DEFAULT_VIEW);
+    setTimeout(() => setFocusLocation(null), 800);
+  }, []);
 
   // Submit POI form
   const handlePOIFormSubmit = useCallback(async (poi: {
@@ -792,6 +819,35 @@ function App() {
         onMapClick={handleMapClick}
       />
 
+      <div className="map-controls">
+        <button className="reset-view-btn" onClick={handleResetView}>
+          Reset view
+        </button>
+        <div className="map-legend">
+          <span className="legend-label">Legend</span>
+          <div className="legend-row">
+            <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.blue.solid }}></span>
+            <span>{(actingUser ?? user).color === 'blue' ? (actingUser ?? user).name : actingOtherUser?.name || 'Myles'}</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.red.solid }}></span>
+            <span>{(actingUser ?? user).color === 'red' ? (actingUser ?? user).name : actingOtherUser?.name || 'Viktoria'}</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.purple.solid }}></span>
+            <span>Both</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-swatch solid"></span>
+            <span>Have visited</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-swatch hatched"></span>
+            <span>Want to visit</span>
+          </div>
+        </div>
+      </div>
+
       <LeftPanel
         user={actingUser ?? user}
         otherUser={actingOtherUser}
@@ -802,20 +858,26 @@ function App() {
         worldCities={worldCities}
         onFiltersChange={setFilters}
         onLayersChange={setLayers}
-        onSearchResultSelect={handleSearchResultSelect}
+        onSearchResultPreview={handleSearchResultPreview}
         onCountrySelect={handleCountrySelect}
+        onSearchReset={handleSearchReset}
       />
 
       <RightPanel
         user={actingUser ?? user}
         otherUser={actingOtherUser}
         selection={selection}
+        searchResult={searchSelection}
         countriesState={countriesState}
         cities={cities}
         pois={pois}
         categories={categories}
         countriesGeoJSON={countriesGeoJSON}
         onClose={handleCloseSelection}
+        onSearchResultAdd={handleSearchResultSelect}
+        onSearchResultClear={handleSearchReset}
+        isCollapsed={isRightPanelCollapsed}
+        onToggleCollapse={() => setIsRightPanelCollapsed(prev => !prev)}
         onCountryFlagToggle={handleCountryFlagToggle}
         onCityFlagToggle={handleCityFlagToggle}
         onCityDelete={handleCityDelete}
