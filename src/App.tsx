@@ -694,27 +694,44 @@ function App() {
 
   return (
     <div className="app">
-      {/* Admin controls (Myles only) */}
-      {isAdmin && (
-        <div className="admin-panel" style={{ padding: 8, display: 'flex', gap: 12, alignItems: 'center' }}>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type="checkbox"
-              checked={adminMode}
-              onChange={e => setAdminMode(e.target.checked)}
-            />
-            Admin setup mode
-          </label>
+{/* Admin controls (Myles only) */}
+{isAdmin && (
+  <div
+    className="admin-panel"
+    style={{
+      position: 'fixed',
+      top: 12,
+      left: 12,
+      zIndex: 10000,
+      background: 'rgba(255,255,255,0.95)',
+      borderRadius: 12,
+      padding: '8px 10px',
+      display: 'flex',
+      gap: 12,
+      alignItems: 'center',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+      backdropFilter: 'blur(8px)',
+    }}
+  >
+    <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <input
+        type="checkbox"
+        checked={adminMode}
+        onChange={e => setAdminMode(e.target.checked)}
+      />
+      Admin setup mode
+    </label>
 
-          {adminMode && (
-            <select value={actingAs} onChange={e => setActingAs(e.target.value as ActingAs)}>
-              <option value="me">Myles</option>
-              <option value="viktoria">Viktoria</option>
-              <option value="both">Both</option>
-            </select>
-          )}
-        </div>
-      )}
+    {adminMode && (
+      <select value={actingAs} onChange={e => setActingAs(e.target.value as ActingAs)}>
+        <option value="me">Myles</option>
+        <option value="viktoria">Viktoria</option>
+        <option value="both">Both</option>
+      </select>
+    )}
+  </div>
+)}
+
 
       <TravelMap
         user={user}
