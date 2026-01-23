@@ -149,10 +149,10 @@ export function TravelMap({
         'fill-color': ['get', 'fillColor'],
         'fill-opacity': ['get', 'fillOpacity'],
       },
-      filter: ['==', ['get', 'pattern'], 'none'],
+      filter: ['==', ['get', 'layer'], 'neutral'],
     });
 
-    // Add countries fill layer (for solid "been" status)
+    // Add countries fill layer (for marked countries)
     mapInstance.addLayer({
       id: 'countries-fill',
       type: 'fill',
@@ -161,7 +161,7 @@ export function TravelMap({
         'fill-color': ['get', 'fillColor'],
         'fill-opacity': ['get', 'fillOpacity'],
       },
-      filter: ['==', ['get', 'pattern'], 'solid'],
+      filter: ['==', ['get', 'layer'], 'marked'],
     });
 
     // Add countries fill pattern layer (for hatched "want" status)
@@ -173,7 +173,7 @@ export function TravelMap({
         'fill-pattern': ['get', 'patternImage'],
         'fill-opacity': 0.6,
       },
-      filter: ['==', ['get', 'pattern'], 'hatched'],
+      filter: ['==', ['get', 'hasPattern'], true],
     });
 
     // Add countries outline layer
@@ -606,7 +606,8 @@ function getCountryStyling(
   fillColor: string;
   outlineColor: string;
   fillOpacity: number;
-  pattern: 'solid' | 'hatched' | 'none';
+  layer: 'neutral' | 'marked';
+  hasPattern: boolean;
   patternImage: string;
 } {
   // Neutral styling for unmarked countries (visible but faint)
@@ -615,7 +616,8 @@ function getCountryStyling(
     fillColor: '#D1D5DB',
     outlineColor: '#9CA3AF',
     fillOpacity: 0.08,
-    pattern: 'none' as const,
+    layer: 'neutral' as const,
+    hasPattern: false,
     patternImage: '',
   };
 
@@ -652,7 +654,6 @@ function getCountryStyling(
     return hiddenStyling;
   }
 
-  // Determine final status (been wins over want)
   const effectiveUserBeen = userBeen;
   const effectiveOtherBeen = otherBeen;
   const effectiveUserWant = userWant && !userBeen;
@@ -665,44 +666,60 @@ function getCountryStyling(
   if (filters.status === 'been' && !hasBeen) return hiddenStyling;
   if (filters.status === 'want' && !hasWant) return hiddenStyling;
 
-  // Determine color (who)
-  const bothBeen = effectiveUserBeen && effectiveOtherBeen;
-  const bothWant = effectiveUserWant && effectiveOtherWant;
-
-  let color: 'blue' | 'red' | 'purple';
-  let pattern: 'solid' | 'hatched';
-
-  if (bothBeen) {
-    color = 'purple';
-    pattern = 'solid';
-  } else if (bothWant) {
-    color = 'purple';
-    pattern = 'hatched';
-  } else if (effectiveUserBeen) {
-    color = user.color;
-    pattern = 'solid';
-  } else if (effectiveOtherBeen && otherUser) {
-    color = otherUser.color;
-    pattern = 'solid';
-  } else if (effectiveUserWant) {
-    color = user.color;
-    pattern = 'hatched';
-  } else if (effectiveOtherWant && otherUser) {
-    color = otherUser.color;
-    pattern = 'hatched';
-  } else {
+  if (!hasBeen && !hasWant) {
     return neutralStyling;
   }
 
-  const colors = USER_COLORS[color];
+  // Determine base fill color (been takes precedence over want)
+  const bothBeen = effectiveUserBeen && effectiveOtherBeen;
+  const bothWant = effectiveUserWant && effectiveOtherWant;
+
+  let fillColorKey: 'blue' | 'red' | 'purple';
+  if (hasBeen) {
+    if (bothBeen) {
+      fillColorKey = 'purple';
+    } else if (effectiveUserBeen) {
+      fillColorKey = user.color;
+    } else if (effectiveOtherBeen && otherUser) {
+      fillColorKey = otherUser.color;
+    } else {
+      fillColorKey = 'purple';
+    }
+  } else {
+    if (bothWant) {
+      fillColorKey = 'purple';
+    } else if (effectiveUserWant) {
+      fillColorKey = user.color;
+    } else if (effectiveOtherWant && otherUser) {
+      fillColorKey = otherUser.color;
+    } else {
+      fillColorKey = 'purple';
+    }
+  }
+
+  let hatchColorKey: 'blue' | 'red' | 'purple' | null = null;
+  if (hasWant) {
+    if (bothWant) {
+      hatchColorKey = 'purple';
+    } else if (effectiveUserWant) {
+      hatchColorKey = user.color;
+    } else if (effectiveOtherWant && otherUser) {
+      hatchColorKey = otherUser.color;
+    } else {
+      hatchColorKey = 'purple';
+    }
+  }
+
+  const fillColors = USER_COLORS[fillColorKey];
 
   return {
     visible: true,
-    fillColor: colors.solid,
-    outlineColor: colors.dark,
-    fillOpacity: pattern === 'solid' ? 0.5 : 0.3,
-    pattern,
-    patternImage: pattern === 'hatched' ? `hatch-${color}` : '',
+    fillColor: fillColors.solid,
+    outlineColor: fillColors.dark,
+    fillOpacity: hasBeen ? 0.5 : 0.3,
+    layer: 'marked',
+    hasPattern: hatchColorKey !== null,
+    patternImage: hatchColorKey ? `hatch-${hatchColorKey}` : '',
   };
 }
 
