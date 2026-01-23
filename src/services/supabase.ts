@@ -64,11 +64,18 @@ export function isEmailAllowlisted(_email: string): boolean {
   return true;
 }
 
+function formatFallbackName(email: string): string {
+  const localPart = email.split('@')[0] ?? '';
+  const base = localPart.split(/[._-]/)[0] ?? localPart;
+  if (!base) return 'User';
+  return `${base[0]?.toUpperCase() ?? ''}${base.slice(1).toLowerCase()}`;
+}
+
 export function getUserInfo(email: string): { id?: string; name: string; color: 'blue' | 'red' } {
   const key = email.toLowerCase();
   const cfg = USER_CONFIG[key];
   if (cfg) return cfg;
-  return { name: email.split('@')[0], color: 'blue' };
+  return { name: formatFallbackName(email), color: 'blue' };
 }
 
 export function toAppUser(supabaseUser: SupabaseUser): User | null {

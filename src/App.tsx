@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { User, CountryState, City, POI, Category, FilterState, LayerVisibility, Selection, POILink } from './types';
 import {
   supabase,
@@ -90,6 +90,20 @@ function App() {
 
   const isAdmin = user?.email === ADMIN_EMAIL;
 
+  const resolvedOtherUser = useMemo(() => {
+    if (!user) return otherUser;
+    if (otherUser?.id) return otherUser;
+    if (user.email === ADMIN_EMAIL) {
+      return {
+        id: VIKTORIA_USER_ID,
+        email: VIKTORIA_EMAIL,
+        name: 'Viktoria',
+        color: 'red',
+      };
+    }
+    return otherUser;
+  }, [user, otherUser]);
+
   // =========================
   // Acting user (admin setup mode)
   // =========================
@@ -112,14 +126,14 @@ function App() {
 
   const actingOtherUser: User | null = (() => {
     if (!user) return null;
-    if (!isAdmin || !adminMode) return otherUser;
+    if (!isAdmin || !adminMode) return resolvedOtherUser;
 
     if (actingAs === 'viktoria') {
       // If you're acting as her, "other user" should be you
       return user;
     }
 
-    return otherUser;
+    return resolvedOtherUser;
   })();
 
   // Persist admin state locally (doesn't depend on her logging in)
