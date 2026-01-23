@@ -24,7 +24,9 @@ if (userConfigStr) {
 
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ---- ADD THIS HELPER (near top is fine) ----
+// =========================
+// Helpers
+// =========================
 function isAbortError(err: any): boolean {
   const name = err?.name ?? '';
   const msg = String(err?.message ?? '');
@@ -37,6 +39,93 @@ function isAbortError(err: any): boolean {
     details.includes('AbortError') ||
     details.includes('signal is aborted')
   );
+}
+
+/**
+ * Detect whether current URL looks like a Supabase auth callback.
+ * Supports both:
+ * - PKCE/code flow (?code=... or #code=...)
+ * - token-in-hash flow (#access_token=...&refresh_token=...)
+ */
+function hasAuthCallbackParams(): boolean {
+  const url = new URL(window.location.href);
+  const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
+  const search = url.searchParams;
+
+  return (
+    hash.has('access_token') ||
+    hash.has('refresh_token') ||
+    hash.has('code') ||
+    search.has('code')
+  );
+}
+
+/**
+ * Remove auth params from URL so refresh/back doesn't re-run the callback.
+ * Safe no-op if params aren't present.
+ */
+function stripAuthParamsFromUrl(): void {
+  const url = new URL(window.location.href);
+
+  // remove code from querystring
+  url.searchParams.delete('code');
+
+  // remove auth tokens/callback params from hash
+  if (url.hash) {
+    const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
+
+    hash.delete('access_token');
+    hash.delete('refresh_token');
+    hash.delete('expires_in');
+    hash.delete('expires_at');
+    hash.delete('token_type');
+    hash.delete('type');
+    hash.delete('provider_token');
+    hash.delete('provider_refresh_token');
+    hash.delete('code');
+
+    const newHash = hash.toString();
+    url.hash = newHash ? `#${newHash}` : '';
+  }
+
+  window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+}
+
+/**
+ * Finalize + persist session when landing from a magic link.
+ * Handles:
+ * - PKCE/code: exchangeCodeForSession(code)
+ * - token-in-hash: setSession({ access_token, refresh_token })
+ */
+async function hydrateSessionFromUrl(): Promise<void> {
+  if (!hasAuthCallbackParams()) return;
+
+  const url = new URL(window.location.href);
+  const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
+
+  // 1) PKCE/code flow (most reliable)
+  const code = url.searchParams.get('code') || hash.get('code');
+  if (code) {
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) {
+      // Non-fatal: some links/configs won't use code flow
+      console.warn('exchangeCodeForSession (non-fatal):', error.message);
+    }
+    stripAuthParamsFromUrl();
+    return;
+  }
+
+  // 2) Token-in-hash flow
+  const access_token = hash.get('access_token');
+  const refresh_token = hash.get('refresh_token');
+
+  if (access_token && refresh_token) {
+    const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+    if (error) {
+      console.warn('setSession (non-fatal):', error.message);
+    }
+    stripAuthParamsFromUrl();
+  }
 }
 
 // =========================
@@ -91,10 +180,26 @@ export async function signOut(): Promise<void> {
 }
 
 export async function getCurrentUser(): Promise<User | null> {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) return null;
-  if (!data?.user) return null;
-  return toAppUser(data.user);
+  try {
+    // If we landed here from a magic link, finalize + persist session
+    await hydrateSessionFromUrl();
+
+    const { data, error } = await supabase.auth.getUser();
+
+    if (error) {
+      // Silently return null on AbortError (lock collision — not a real error)
+      if (isAbortError(error)) return null;
+      return null;
+    }
+
+    if (!data?.user) return null;
+    return toAppUser(data.user);
+  } catch (e: any) {
+    // Silently return null on AbortError (lock collision — not a real error)
+    if (isAbortError(e)) return null;
+    console.error('getCurrentUser failed:', e);
+    return null;
+  }
 }
 
 /**
@@ -320,7 +425,6 @@ export async function createCategory(name: string): Promise<Category | null> {
   if (error) {
     // Postgres unique violation code is 23505 (often exposed as error.code)
     // If not present, we still just throw.
-    // @ts-expect-error supabase error typing varies
     const code = (error as any)?.code;
     if (code === '23505') {
       const { data: existing, error: fetchErr } = await supabase

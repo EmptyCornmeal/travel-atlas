@@ -4,6 +4,7 @@ import {
   supabase,
   getCurrentUser,
   getOtherUser,
+  toAppUser,
   fetchCountriesState,
   fetchCities,
   fetchPOIs,
@@ -97,52 +98,65 @@ function App() {
     localStorage.setItem(LS_ACTING_AS, actingAs);
   }, [actingAs]);
 
-// Check auth state on mount (fail-open: never get stuck on Loading)
-useEffect(() => {
-  let cancelled = false;
+  // Check auth state on mount (fail-open: never get stuck on Loading)
+  useEffect(() => {
+    let cancelled = false;
 
-  const checkAuth = async () => {
-    try {
-      const currentUser = await getCurrentUser();
-      if (cancelled) return;
-
-      if (currentUser) {
-        setUser(currentUser);
-        const other = await getOtherUser(currentUser.email);
-        if (!cancelled) setOtherUser(other);
-      }
-    } catch (e) {
-      console.error('Auth check failed:', e);
-    } finally {
-      if (!cancelled) setIsAuthChecking(false);
-    }
-  };
-
-  checkAuth();
-
-  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-    try {
-      if (event === 'SIGNED_IN' && session?.user) {
+    const bootstrap = async () => {
+      try {
+        // Single bootstrap call — handles URL hydration internally
         const currentUser = await getCurrentUser();
-        if (!currentUser) return;
+        if (cancelled) return;
 
-        setUser(currentUser);
-        const other = await getOtherUser(currentUser.email);
-        setOtherUser(other);
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null);
-        setOtherUser(null);
+        if (currentUser) {
+          setUser(currentUser);
+          try {
+            const other = await getOtherUser(currentUser.email);
+            if (!cancelled) setOtherUser(other);
+          } catch (e) {
+            console.warn('getOtherUser failed (non-fatal):', e);
+          }
+        }
+      } catch (e) {
+        console.error('Auth bootstrap failed (non-fatal):', e);
+      } finally {
+        if (!cancelled) setIsAuthChecking(false);
       }
-    } catch (e) {
-      console.error('onAuthStateChange failed:', e);
-    }
-  });
+    };
 
-  return () => {
-    cancelled = true;
-    subscription.unsubscribe();
-  };
-}, []);
+    bootstrap();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      try {
+        // IMPORTANT: Ignore INITIAL_SESSION to avoid racing bootstrap (causes AbortError)
+        if (event === 'INITIAL_SESSION') return;
+
+        if (event === 'SIGNED_IN' && session?.user) {
+          // Use toAppUser directly — do NOT call getCurrentUser() here (lock collision)
+          const currentUser = toAppUser(session.user);
+          if (!currentUser) return;
+
+          setUser(currentUser);
+          try {
+            const other = await getOtherUser(currentUser.email);
+            setOtherUser(other);
+          } catch (e) {
+            console.warn('getOtherUser in listener failed (non-fatal):', e);
+          }
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+          setOtherUser(null);
+        }
+      } catch (e) {
+        console.error('onAuthStateChange failed:', e);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // Load GeoJSON data on mount
   useEffect(() => {
