@@ -28,7 +28,7 @@ const HATCH_PATTERN_RED = createHatchPatternPng(USER_COLORS.red.solid);
 const HATCH_PATTERN_PURPLE = createHatchPatternPng(USER_COLORS.purple.solid);
 
 function createHatchPatternPng(color: string): string {
-  const size = 16;
+  const size = 32;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -41,10 +41,12 @@ function createHatchPatternPng(color: string): string {
 
   // draw diagonal hatch lines
   ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.55;
+  ctx.lineCap = 'round';
 
   // A few lines to tile nicely
-  for (let i = -size; i <= size * 2; i += 6) {
+  for (let i = -size; i <= size * 2; i += 10) {
     ctx.beginPath();
     ctx.moveTo(i, size);
     ctx.lineTo(i + size, 0);
