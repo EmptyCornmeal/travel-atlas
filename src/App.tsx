@@ -38,6 +38,7 @@ const SYNC_INTERVAL = 15000;
 type ActingAs = 'me' | 'viktoria' | 'both';
 
 const ADMIN_EMAIL = 'myles.colling@gmail.com';
+const VIKTORIA_EMAIL = 'viktoria.venkates@gmail.com';
 const VIKTORIA_USER_ID = '329d827a-7e6d-4b43-8967-5d85c5776ff1';
 
 // localStorage keys (persist on your device)
@@ -88,6 +89,38 @@ function App() {
   const toast = useToasts();
 
   const isAdmin = user?.email === ADMIN_EMAIL;
+
+  // =========================
+  // Acting user (admin setup mode)
+  // =========================
+  const actingUser: User | null = (() => {
+    if (!user) return null;
+    if (!isAdmin || !adminMode) return user;
+
+    if (actingAs === 'viktoria') {
+      return {
+        id: VIKTORIA_USER_ID,
+        email: VIKTORIA_EMAIL,
+        name: 'Viktoria',
+        color: 'red',
+      };
+    }
+
+    // actingAs === 'me' or 'both' -> keep you as the "You" view
+    return user;
+  })();
+
+  const actingOtherUser: User | null = (() => {
+    if (!user) return null;
+    if (!isAdmin || !adminMode) return otherUser;
+
+    if (actingAs === 'viktoria') {
+      // If you're acting as her, "other user" should be you
+      return user;
+    }
+
+    return otherUser;
+  })();
 
   // Persist admin state locally (doesn't depend on her logging in)
   useEffect(() => {
@@ -694,48 +727,40 @@ function App() {
 
   return (
     <div className="app">
-{/* Admin controls (Myles only) */}
-{isAdmin && (
-  <div
-    className="admin-panel"
-    style={{
-      position: 'fixed',
-      top: 12,
-      left: 12,
-      zIndex: 10000,
-      background: 'rgba(255,255,255,0.95)',
-      borderRadius: 12,
-      padding: '8px 10px',
-      display: 'flex',
-      gap: 12,
-      alignItems: 'center',
-      boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-      backdropFilter: 'blur(8px)',
-    }}
-  >
-    <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <input
-        type="checkbox"
-        checked={adminMode}
-        onChange={e => setAdminMode(e.target.checked)}
-      />
-      Admin setup mode
-    </label>
+      {isAdmin && (
+        <div className="topbar">
+          <div className="topbar-left">
+            <span className="brand">Travel Atlas</span>
+            <span className={`badge badge-${actingUser?.color || 'blue'}`}>
+              {actingUser?.name || '—'}
+            </span>
+          </div>
 
-    {adminMode && (
-      <select value={actingAs} onChange={e => setActingAs(e.target.value as ActingAs)}>
-        <option value="me">Myles</option>
-        <option value="viktoria">Viktoria</option>
-        <option value="both">Both</option>
-      </select>
-    )}
-  </div>
-)}
+          <div className="topbar-right">
+            <label className="admin-toggle">
+              <input
+                type="checkbox"
+                checked={adminMode}
+                onChange={e => setAdminMode(e.target.checked)}
+              />
+              Admin setup mode
+            </label>
+
+            {adminMode && (
+              <select value={actingAs} onChange={e => setActingAs(e.target.value as ActingAs)}>
+                <option value="me">Myles</option>
+                <option value="viktoria">Viktoria</option>
+                <option value="both">Both</option>
+              </select>
+            )}
+          </div>
+        </div>
+      )}
 
 
       <TravelMap
-        user={user}
-        otherUser={otherUser}
+        user={actingUser ?? user}
+        otherUser={actingOtherUser}
         countriesState={countriesState}
         cities={cities}
         pois={pois}
@@ -750,8 +775,8 @@ function App() {
       />
 
       <LeftPanel
-        user={user}
-        otherUser={otherUser}
+        user={actingUser ?? user}
+        otherUser={actingOtherUser}
         filters={filters}
         layers={layers}
         categories={categories}
@@ -764,8 +789,8 @@ function App() {
       />
 
       <RightPanel
-        user={user}
-        otherUser={otherUser}
+        user={actingUser ?? user}
+        otherUser={actingOtherUser}
         selection={selection}
         countriesState={countriesState}
         cities={cities}

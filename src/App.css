@@ -96,3 +96,64 @@ button {
   font-size: 18px;
   padding: 4px 8px;
 }
+
+/* =========================
+   Admin topbar
+   ========================= */
+.topbar{
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  z-index: 1000;
+  background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+}
+
+.topbar-left{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand{
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;
+}
+
+.topbar-right{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-toggle{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  font-size: 13px;
+  color: #111827;
+}
+
+.badge{
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid rgba(0,0,0,0.08);
+  color: #111827;
+}
+.badge-blue{ background: rgba(59,130,246,0.12); }
+.badge-red{ background: rgba(239,68,68,0.12); }
+.badge-purple{ background: rgba(139,92,246,0.12); }
+
+/* Make space for topbar */
+.app{
+  padding-top: 44px;
+}
