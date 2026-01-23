@@ -289,6 +289,31 @@ function App() {
     }
   }, [user, getTargetUserIds]);
 
+  const adminAwareSetCityFlag = useCallback(async (cityId: string, flag: 'want' | 'been', value: boolean) => {
+    if (!user) return;
+
+    const targets = getTargetUserIds();
+
+    // Normal path (me-only)
+    if (targets.length === 1 && targets[0] === user.id) {
+      await setCityFlag(cityId, flag, value);
+      return;
+    }
+
+    // Admin path
+    for (const targetId of targets) {
+      const { error } = await supabase.rpc('admin_set_city_flag', {
+        p_city_id: cityId,
+        p_flag: flag,
+        p_value: value,
+        p_target_user_id: targetId,
+      });
+      if (error) throw error;
+    }
+  }, [user, getTargetUserIds]);
+
+
+
   // Handlers
   const handleCountryClick = useCallback((isoA3: string) => {
     setSelection({ type: 'country', id: isoA3 });
@@ -372,14 +397,23 @@ function App() {
     setIsLoading(false);
   }, [user, isAdmin, adminMode, actingAs, adminAwareSetCountryFlag, fetchAllData, toast]);
 
-  // City flag toggle (unchanged for now)
+  // City flag toggle (admin-aware)
   const handleCityFlagToggle = useCallback(async (cityId: string, flag: 'want' | 'been', value: boolean) => {
     if (!user) return;
 
     setIsLoading(true);
     try {
-      await setCityFlag(cityId, flag, value);
+      await adminAwareSetCityFlag(cityId, flag, value);
 
+      // If we acted as someone other than "me", re-sync from DB (avoid wrong optimistic write)
+      if (isAdmin && adminMode && actingAs !== 'me') {
+        await fetchAllData();
+        toast.success('Saved');
+        setIsLoading(false);
+        return;
+      }
+
+      // Optimistic update (me-only)
       setCities(prev => prev.map(c => {
         if (c.id !== cityId) return c;
         const flagKey = flag === 'want' ? 'want_by' : 'been_by';
@@ -395,7 +429,16 @@ function App() {
       toast.error('Failed to save');
     }
     setIsLoading(false);
-  }, [user, toast]);
+  }, [
+    user,
+    isAdmin,
+    adminMode,
+    actingAs,
+    adminAwareSetCityFlag,
+    fetchAllData,
+    toast,
+  ]);
+
 
   // City delete
   const handleCityDelete = useCallback(async (cityId: string) => {
