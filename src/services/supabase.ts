@@ -22,7 +22,19 @@ if (userConfigStr) {
   }
 }
 
-export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Configure client properly for GitHub Pages (PKCE + detectSessionInUrl)
+export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    flowType: 'pkce',
+    detectSessionInUrl: true,
+    persistSession: true,
+    autoRefreshToken: true,
+    storageKey: 'travel-atlas-auth',
+  },
+});
+
+// Expose for debugging in console
+(window as any).supabase = supabase;
 
 // =========================
 // Helpers
@@ -41,97 +53,9 @@ function isAbortError(err: any): boolean {
   );
 }
 
-/**
- * Detect whether current URL looks like a Supabase auth callback.
- * Supports both:
- * - PKCE/code flow (?code=... or #code=...)
- * - token-in-hash flow (#access_token=...&refresh_token=...)
- */
-function hasAuthCallbackParams(): boolean {
-  const url = new URL(window.location.href);
-  const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
-  const search = url.searchParams;
-
-  return (
-    hash.has('access_token') ||
-    hash.has('refresh_token') ||
-    hash.has('code') ||
-    search.has('code')
-  );
-}
-
-/**
- * Remove auth params from URL so refresh/back doesn't re-run the callback.
- * Safe no-op if params aren't present.
- */
-function stripAuthParamsFromUrl(): void {
-  const url = new URL(window.location.href);
-
-  // remove code from querystring
-  url.searchParams.delete('code');
-
-  // remove auth tokens/callback params from hash
-  if (url.hash) {
-    const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
-
-    hash.delete('access_token');
-    hash.delete('refresh_token');
-    hash.delete('expires_in');
-    hash.delete('expires_at');
-    hash.delete('token_type');
-    hash.delete('type');
-    hash.delete('provider_token');
-    hash.delete('provider_refresh_token');
-    hash.delete('code');
-
-    const newHash = hash.toString();
-    url.hash = newHash ? `#${newHash}` : '';
-  }
-
-  window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
-}
-
-/**
- * Finalize + persist session when landing from a magic link.
- * Handles:
- * - PKCE/code: exchangeCodeForSession(code)
- * - token-in-hash: setSession({ access_token, refresh_token })
- */
-async function hydrateSessionFromUrl(): Promise<void> {
-  if (!hasAuthCallbackParams()) return;
-
-  const url = new URL(window.location.href);
-  const hash = new URLSearchParams(url.hash.replace(/^#/, ''));
-
-  // 1) PKCE/code flow (most reliable)
-  const code = url.searchParams.get('code') || hash.get('code');
-  if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) {
-      // Non-fatal: some links/configs won't use code flow
-      console.warn('exchangeCodeForSession (non-fatal):', error.message);
-    }
-    stripAuthParamsFromUrl();
-    return;
-  }
-
-  // 2) Token-in-hash flow
-  const access_token = hash.get('access_token');
-  const refresh_token = hash.get('refresh_token');
-
-  if (access_token && refresh_token) {
-    const { error } = await supabase.auth.setSession({ access_token, refresh_token });
-    if (error) {
-      console.warn('setSession (non-fatal):', error.message);
-    }
-    stripAuthParamsFromUrl();
-  }
-}
-
 // =========================
 // User helpers
 // =========================
-// RLS in Supabase enforces allowlisting; do not rely on client-side allowlists.
 export function isEmailAllowlisted(_email: string): boolean {
   return true;
 }
@@ -139,8 +63,6 @@ export function isEmailAllowlisted(_email: string): boolean {
 export function getUserInfo(email: string): { name: string; color: 'blue' | 'red' } {
   const cfg = USER_CONFIG[email.toLowerCase()];
   if (cfg) return cfg;
-
-  // Safe fallback (not security-related)
   return { name: email.split('@')[0], color: 'blue' };
 }
 
@@ -162,7 +84,6 @@ export function toAppUser(supabaseUser: SupabaseUser): User | null {
 // Auth
 // =========================
 export async function signInWithMagicLink(email: string): Promise<{ error: Error | null }> {
-  // Use BASE_URL so it works on GitHub Pages (/travel-atlas/)
   const redirectTo = window.location.origin + import.meta.env.BASE_URL;
 
   const { error } = await supabase.auth.signInWithOtp({
@@ -179,23 +100,17 @@ export async function signOut(): Promise<void> {
   await supabase.auth.signOut();
 }
 
+/**
+ * Use getSession() instead of getUser() to avoid edge cases during redirects.
+ * Let Supabase handle URL session detection via detectSessionInUrl: true.
+ */
 export async function getCurrentUser(): Promise<User | null> {
   try {
-    // If we landed here from a magic link, finalize + persist session
-    await hydrateSessionFromUrl();
-
-    const { data, error } = await supabase.auth.getUser();
-
-    if (error) {
-      // Silently return null on AbortError (lock collision — not a real error)
-      if (isAbortError(error)) return null;
-      return null;
-    }
-
-    if (!data?.user) return null;
-    return toAppUser(data.user);
+    const { data } = await supabase.auth.getSession();
+    const sessionUser = data.session?.user;
+    if (!sessionUser) return null;
+    return toAppUser(sessionUser);
   } catch (e: any) {
-    // Silently return null on AbortError (lock collision — not a real error)
     if (isAbortError(e)) return null;
     console.error('getCurrentUser failed:', e);
     return null;
@@ -204,7 +119,6 @@ export async function getCurrentUser(): Promise<User | null> {
 
 /**
  * "Other user" is optional sugar for UI. We derive it from VITE_USER_CONFIG keys.
- * ID is left blank unless you later choose to resolve via profiles table.
  */
 export async function getOtherUser(currentEmail: string): Promise<User | null> {
   const emails = Object.keys(USER_CONFIG).map(e => e.toLowerCase());
@@ -298,12 +212,6 @@ export async function setCityFlag(
   }
 }
 
-/**
- * NOTE: updateCity() removed on purpose.
- * Your RLS disables direct UPDATE on cities (updates must go through RPC),
- * and v1 does not require renaming cities.
- */
-
 export async function deleteCity(city_id: string): Promise<void> {
   const { error } = await supabase.from('cities').delete().eq('id', city_id);
 
@@ -360,7 +268,7 @@ export async function updatePOIAsCreator(
   }
 ): Promise<void> {
   const { error } = await supabase.rpc('update_poi_as_creator', {
-    p_id: poi_id, // IMPORTANT: matches your actual function signature (p_id ...)
+    p_id: poi_id,
     p_label: updates.label,
     p_status: updates.status,
     p_category_id: updates.category_id,
@@ -377,7 +285,7 @@ export async function updatePOIAsCreator(
 
 export async function setPOIEndorsement(poi_id: string, value: boolean): Promise<void> {
   const { error } = await supabase.rpc('set_poi_endorsement', {
-    p_id: poi_id, // IMPORTANT: matches your actual function signature (p_id ...)
+    p_id: poi_id,
     p_value: value,
   });
 
@@ -421,10 +329,7 @@ export async function createCategory(name: string): Promise<Category | null> {
     .select()
     .single();
 
-  // If unique violation, fetch the existing category and return it
   if (error) {
-    // Postgres unique violation code is 23505 (often exposed as error.code)
-    // If not present, we still just throw.
     const code = (error as any)?.code;
     if (code === '23505') {
       const { data: existing, error: fetchErr } = await supabase

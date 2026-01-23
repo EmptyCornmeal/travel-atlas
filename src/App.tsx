@@ -98,13 +98,20 @@ function App() {
     localStorage.setItem(LS_ACTING_AS, actingAs);
   }, [actingAs]);
 
-  // Check auth state on mount (fail-open: never get stuck on Loading)
+  // Check auth state on mount with hard timeout fail-open
   useEffect(() => {
     let cancelled = false;
 
-    const bootstrap = async () => {
+    // Hard timeout: never get stuck on Loading, even if auth explodes
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        console.warn('Auth check timed out, failing open');
+        setIsAuthChecking(false);
+      }
+    }, 2500);
+
+    (async () => {
       try {
-        // Single bootstrap call — handles URL hydration internally
         const currentUser = await getCurrentUser();
         if (cancelled) return;
 
@@ -120,19 +127,20 @@ function App() {
       } catch (e) {
         console.error('Auth bootstrap failed (non-fatal):', e);
       } finally {
-        if (!cancelled) setIsAuthChecking(false);
+        if (!cancelled) {
+          setIsAuthChecking(false);
+          clearTimeout(timeout);
+        }
       }
-    };
+    })();
 
-    bootstrap();
-
+    // Listen for auth state changes (sign in/out)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       try {
-        // IMPORTANT: Ignore INITIAL_SESSION to avoid racing bootstrap (causes AbortError)
+        // Skip INITIAL_SESSION to avoid racing bootstrap
         if (event === 'INITIAL_SESSION') return;
 
         if (event === 'SIGNED_IN' && session?.user) {
-          // Use toAppUser directly — do NOT call getCurrentUser() here (lock collision)
           const currentUser = toAppUser(session.user);
           if (!currentUser) return;
 
@@ -154,6 +162,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
       subscription.unsubscribe();
     };
   }, []);
