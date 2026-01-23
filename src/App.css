@@ -2,6 +2,10 @@
   box-sizing: border-box;
 }
 
+:root{
+  --topbar-h: 44px;
+}
+
 html, body, #root {
   margin: 0;
   padding: 0;
@@ -20,6 +24,7 @@ body {
   position: relative;
   height: 100%;
   width: 100%;
+  /* padding-top does NOT move absolute children, so don't rely on it */
 }
 
 /* Loading Screen */
@@ -67,7 +72,7 @@ body {
 /* Loading Overlay */
 .loading-overlay {
   position: fixed;
-  top: 20px;
+  top: calc(var(--topbar-h) + 12px); /* keep it below the topbar */
   left: 50%;
   transform: translateX(-50%);
   z-index: 500;
@@ -105,7 +110,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  height: 44px;
+  height: var(--topbar-h);
   z-index: 1000;
   background: rgba(255,255,255,0.95);
   backdrop-filter: blur(6px);
@@ -114,6 +119,7 @@ button {
   justify-content: space-between;
   padding: 0 12px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 
 .topbar-left{
@@ -153,7 +159,21 @@ button {
 .badge-red{ background: rgba(239,68,68,0.12); }
 .badge-purple{ background: rgba(139,92,246,0.12); }
 
-/* Make space for topbar */
-.app{
-  padding-top: 44px;
+/* =========================
+   IMPORTANT FIX:
+   Your panels + map are ABSOLUTE with top: 0.
+   Offset them by the topbar height.
+   ========================= */
+.left-panel,
+.right-panel,
+.maplibregl-map {
+  top: var(--topbar-h) !important;
+  height: calc(100vh - var(--topbar-h)) !important;
+}
+
+/* If your map is wrapped, catch those too */
+.map-container,
+#map {
+  top: var(--topbar-h) !important;
+  height: calc(100vh - var(--topbar-h)) !important;
 }
