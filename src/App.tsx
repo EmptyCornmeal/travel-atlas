@@ -60,6 +60,7 @@ function App() {
   const [selection, setSelection] = useState<Selection>({ type: null, id: null });
   const [isLoading, setIsLoading] = useState(false);
   const [showPOIForm, setShowPOIForm] = useState<{ lat: number; lng: number } | null>(null);
+  const [focusCountry, setFocusCountry] = useState<{ isoA3: string; bbox: [number, number, number, number] } | null>(null);
 
   // Toast notifications
   const toast = useToasts();
@@ -196,13 +197,28 @@ useEffect(() => {
     setSelection({ type: null, id: null });
   }, []);
 
-  // Country flag toggle
+  // Country select from search (zoom and select)
+  const handleCountrySelect = useCallback((isoA3: string, bbox: [number, number, number, number]) => {
+    setSelection({ type: 'country', id: isoA3 });
+    // Set focusCountry to trigger zoom, then clear it
+    setFocusCountry({ isoA3, bbox });
+    // Clear after a short delay to allow re-selection of same country
+    setTimeout(() => setFocusCountry(null), 800);
+  }, []);
+
+  // Country flag toggle with mutual exclusivity (been turns off want)
   const handleCountryFlagToggle = useCallback(async (isoA3: string, flag: 'want' | 'been', value: boolean) => {
     if (!user) return;
 
     setIsLoading(true);
     try {
-      await setCountryFlag(isoA3, flag, value);
+      // If setting "been" to true, also set "want" to false
+      if (flag === 'been' && value) {
+        await setCountryFlag(isoA3, 'want', false);
+        await setCountryFlag(isoA3, 'been', true);
+      } else {
+        await setCountryFlag(isoA3, flag, value);
+      }
 
       // Optimistic update
       setCountriesState(prev => {
@@ -210,11 +226,16 @@ useEffect(() => {
         if (existing) {
           return prev.map(s => {
             if (s.iso_a3 !== isoA3) return s;
-            const flagKey = flag === 'want' ? 'want_by' : 'been_by';
-            return {
-              ...s,
-              [flagKey]: { ...s[flagKey], [user.id]: value },
-            };
+            const updated = { ...s };
+            if (flag === 'been' && value) {
+              // Been true turns off want
+              updated.want_by = { ...s.want_by, [user.id]: false };
+              updated.been_by = { ...s.been_by, [user.id]: true };
+            } else {
+              const flagKey = flag === 'want' ? 'want_by' : 'been_by';
+              updated[flagKey] = { ...s[flagKey], [user.id]: value };
+            }
+            return updated;
           });
         } else {
           const newState: CountryState = {
@@ -399,8 +420,9 @@ useEffect(() => {
       setIsLoading(true);
       try {
         // Find country ISO from coordinates using the countries GeoJSON
-        const countryIsoA3: string | null = null;
-        // For simplicity, we'll leave country lookup to the server or skip it
+        const countryIsoA3 = countriesGeoJSON
+          ? findCountryIsoA3(countriesGeoJSON, result.lat, result.lng)
+          : null;
 
         const newCity = await createCity({
           name: result.name,
@@ -425,7 +447,7 @@ useEffect(() => {
       // Show POI form with pre-filled location
       setShowPOIForm({ lat: result.lat, lng: result.lng });
     }
-  }, [user, toast]);
+  }, [user, countriesGeoJSON, toast]);
 
 // Submit POI form
 const handlePOIFormSubmit = useCallback(async (poi: {
@@ -458,6 +480,44 @@ const handlePOIFormSubmit = useCallback(async (poi: {
       setShowPOIForm(null);
       setSelection({ type: 'poi', id: newPOI.id });
       toast.success('POI added');
+
+      // Auto-mark the country with the same status as the POI
+      if (isoA3) {
+        try {
+          const flag = poi.status; // 'want' or 'been'
+          await setCountryFlag(isoA3, flag, true);
+          // If been, also turn off want
+          if (flag === 'been') {
+            await setCountryFlag(isoA3, 'want', false);
+          }
+          // Optimistic update for country state
+          setCountriesState(prev => {
+            const existing = prev.find(s => s.iso_a3 === isoA3);
+            if (existing) {
+              return prev.map(s => {
+                if (s.iso_a3 !== isoA3) return s;
+                const updated = { ...s };
+                if (flag === 'been') {
+                  updated.want_by = { ...s.want_by, [user.id]: false };
+                  updated.been_by = { ...s.been_by, [user.id]: true };
+                } else {
+                  updated.want_by = { ...s.want_by, [user.id]: true };
+                }
+                return updated;
+              });
+            } else {
+              return [...prev, {
+                iso_a3: isoA3,
+                want_by: flag === 'want' ? { [user.id]: true } : {},
+                been_by: flag === 'been' ? { [user.id]: true } : {},
+              }];
+            }
+          });
+        } catch {
+          // Non-critical - don't fail POI creation
+          console.warn('Failed to auto-mark country');
+        }
+      }
     }
   } catch (error) {
     console.error('Error creating POI:', error);
@@ -491,6 +551,7 @@ const handlePOIFormSubmit = useCallback(async (poi: {
         filters={filters}
         layers={layers}
         selection={selection}
+        focusCountry={focusCountry}
         onCountryClick={handleCountryClick}
         onCityClick={handleCityClick}
         onPOIClick={handlePOIClick}
@@ -503,10 +564,12 @@ const handlePOIFormSubmit = useCallback(async (poi: {
         filters={filters}
         layers={layers}
         categories={categories}
+        countriesGeoJSON={countriesGeoJSON}
         worldCities={worldCities}
         onFiltersChange={setFilters}
         onLayersChange={setLayers}
         onSearchResultSelect={handleSearchResultSelect}
+        onCountrySelect={handleCountrySelect}
       />
 
       <RightPanel

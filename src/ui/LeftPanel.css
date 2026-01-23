@@ -135,6 +135,11 @@
   color: #6B7280;
 }
 
+.result-type.type-country {
+  background: #D1FAE5;
+  color: #047857;
+}
+
 .add-options {
   padding: 12px;
   background: #F9FAFB;
