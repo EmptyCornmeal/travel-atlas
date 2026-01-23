@@ -47,6 +47,28 @@ export function LeftPanel({
   const [isSearching, setIsSearching] = useState(false);
   const [showAddOptions, setShowAddOptions] = useState<GeocodingResult | null>(null);
 
+  const normalizeCoordinates = (coords: number[]): { lat: number; lng: number } | null => {
+    if (coords.length < 2) return null;
+    const [x, y] = coords;
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    if (Math.abs(x) <= 180 && Math.abs(y) <= 90) {
+      return { lat: y, lng: x };
+    }
+
+    const originShift = 20037508.34;
+    const lng = (x / originShift) * 180;
+    const lat = (y / originShift) * 180;
+    const latRadians = (Math.PI / 180) * lat;
+    const latDegrees =
+      (180 / Math.PI) * (2 * Math.atan(Math.exp(latRadians)) - Math.PI / 2);
+
+    if (!Number.isFinite(lng) || !Number.isFinite(latDegrees)) return null;
+
+    return { lat: latDegrees, lng };
+  };
+
   // Search countries, then world cities, then fall back to Nominatim
   const performSearch = useCallback(async (query: string) => {
     if (!query.trim() || query.length < 2) {
@@ -96,13 +118,17 @@ export function LeftPanel({
         const country = feature.properties?.country || feature.properties?.CNTRY_NAME || '';
 
         if (name.toLowerCase().includes(lowerQuery)) {
-          const coords = (feature.geometry as GeoJSON.Point).coordinates;
+          const coords = (feature.geometry as GeoJSON.Point).coordinates as number[];
+          const normalizedCoords = normalizeCoordinates(coords);
+          if (!normalizedCoords) {
+            return;
+          }
           localResults.push({
-            id: `local-${name}-${coords[0]}-${coords[1]}`,
+            id: `local-${name}-${normalizedCoords.lng}-${normalizedCoords.lat}`,
             name,
             displayName: `${name}, ${country}`,
-            lat: coords[1],
-            lng: coords[0],
+            lat: normalizedCoords.lat,
+            lng: normalizedCoords.lng,
             country,
             type: 'city',
           });
