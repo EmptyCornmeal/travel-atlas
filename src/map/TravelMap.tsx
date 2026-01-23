@@ -4,6 +4,7 @@ import type { Map, GeoJSONSource, MapMouseEvent, LngLatLike } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { CountryState, City, POI, User, FilterState, LayerVisibility, Selection } from '../types';
 import { USER_COLORS } from '../types';
+import area from '@turf/area';
 
 interface TravelMapProps {
   user: User;
@@ -27,7 +28,7 @@ const HATCH_PATTERN_RED = createHatchPatternPng(USER_COLORS.red.solid);
 const HATCH_PATTERN_PURPLE = createHatchPatternPng(USER_COLORS.purple.solid);
 
 function createHatchPatternPng(color: string): string {
-  const size = 16;
+  const size = 32;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -40,10 +41,12 @@ function createHatchPatternPng(color: string): string {
 
   // draw diagonal hatch lines
   ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.55;
+  ctx.lineCap = 'round';
 
   // A few lines to tile nicely
-  for (let i = -size; i <= size * 2; i += 6) {
+  for (let i = -size; i <= size * 2; i += 10) {
     ctx.beginPath();
     ctx.moveTo(i, size);
     ctx.lineTo(i + size, 0);
@@ -447,7 +450,8 @@ export function TravelMap({
       const countriesGeoJSON: GeoJSON.FeatureCollection = await response.json();
 
       // Merge with state and apply styling - include ALL countries
-      const styledFeatures = countriesGeoJSON.features
+      const sortedFeatures = [...countriesGeoJSON.features].sort((a, b) => area(b as any) - area(a as any));
+      const styledFeatures = sortedFeatures
         .map(feature => {
           const isoA3 = feature.properties?.iso_a3;
           if (!isoA3) return null;

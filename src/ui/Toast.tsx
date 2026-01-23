@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import './Toast.css';
 
 export interface ToastMessage {
@@ -51,14 +51,14 @@ function Toast({ toast, onDismiss }: { toast: ToastMessage; onDismiss: (id: stri
 export function useToasts() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  const addToast = (type: ToastMessage['type'], message: string) => {
+  const addToast = useCallback((type: ToastMessage['type'], message: string) => {
     const id = Math.random().toString(36).substring(7);
     setToasts(prev => [...prev, { id, type, message }]);
-  };
+  }, []);
 
-  const dismissToast = (id: string) => {
+  const dismissToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
-  };
+  }, []);
 
   return {
     toasts,
