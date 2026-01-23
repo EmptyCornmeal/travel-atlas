@@ -108,17 +108,11 @@ useEffect(() => {
 
       if (currentUser) {
         setUser(currentUser);
-
-        // getOtherUser is optional UI sugar; don't let it break startup
-        try {
-          const other = await getOtherUser(currentUser.email);
-          if (!cancelled) setOtherUser(other);
-        } catch (e) {
-          console.warn('getOtherUser failed (non-fatal):', e);
-        }
+        const other = await getOtherUser(currentUser.email);
+        if (!cancelled) setOtherUser(other);
       }
     } catch (e) {
-      console.error('Auth check failed (non-fatal):', e);
+      console.error('Auth check failed:', e);
     } finally {
       if (!cancelled) setIsAuthChecking(false);
     }
@@ -126,32 +120,27 @@ useEffect(() => {
 
   checkAuth();
 
-  const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
     try {
       if (event === 'SIGNED_IN' && session?.user) {
         const currentUser = await getCurrentUser();
         if (!currentUser) return;
 
         setUser(currentUser);
-
-        try {
-          const other = await getOtherUser(currentUser.email);
-          setOtherUser(other);
-        } catch (e) {
-          console.warn('getOtherUser failed (non-fatal):', e);
-        }
+        const other = await getOtherUser(currentUser.email);
+        setOtherUser(other);
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
         setOtherUser(null);
       }
     } catch (e) {
-      console.error('onAuthStateChange handler failed:', e);
+      console.error('onAuthStateChange failed:', e);
     }
   });
 
   return () => {
     cancelled = true;
-    data?.subscription?.unsubscribe?.();
+    subscription.unsubscribe();
   };
 }, []);
 
