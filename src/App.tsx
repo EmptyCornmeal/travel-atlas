@@ -31,6 +31,18 @@ import { findCountryIsoA3 } from './utils/geo';
 // Sync interval (15 seconds)
 const SYNC_INTERVAL = 15000;
 
+// =========================
+// Admin setup mode
+// =========================
+type ActingAs = 'me' | 'viktoria' | 'both';
+
+const ADMIN_EMAIL = 'myles.colling@gmail.com';
+const VIKTORIA_USER_ID = '329d827a-7e6d-4b43-8967-5d85c5776ff1';
+
+// localStorage keys (persist on your device)
+const LS_ADMIN_MODE = 'ta_adminMode';
+const LS_ACTING_AS = 'ta_actingAs';
+
 function App() {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -60,81 +72,124 @@ function App() {
   const [selection, setSelection] = useState<Selection>({ type: null, id: null });
   const [isLoading, setIsLoading] = useState(false);
   const [showPOIForm, setShowPOIForm] = useState<{ lat: number; lng: number } | null>(null);
-  const [focusCountry, setFocusCountry] = useState<{ isoA3: string; bbox: [number, number, number, number] } | null>(null);
+  const [focusCountry, setFocusCountry] = useState<{ isoA3: string; bbox: [number, number, number, number] } | null>(
+    null
+  );
+
+  // Admin UI state (persist on this device)
+  const [adminMode, setAdminMode] = useState<boolean>(() => localStorage.getItem(LS_ADMIN_MODE) === '1');
+  const [actingAs, setActingAs] = useState<ActingAs>(() => {
+    const v = localStorage.getItem(LS_ACTING_AS) as ActingAs | null;
+    return v === 'me' || v === 'viktoria' || v === 'both' ? v : 'me';
+  });
 
   // Toast notifications
   const toast = useToasts();
 
-  // Check auth state on mount
+  const isAdmin = user?.email === ADMIN_EMAIL;
+
+  // Persist admin state locally (doesn't depend on her logging in)
   useEffect(() => {
-    const checkAuth = async () => {
+    localStorage.setItem(LS_ADMIN_MODE, adminMode ? '1' : '0');
+  }, [adminMode]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_ACTING_AS, actingAs);
+  }, [actingAs]);
+
+// Check auth state on mount (fail-open: never get stuck on Loading)
+useEffect(() => {
+  let cancelled = false;
+
+  const checkAuth = async () => {
+    try {
       const currentUser = await getCurrentUser();
+      if (cancelled) return;
+
       if (currentUser) {
         setUser(currentUser);
-        const other = await getOtherUser(currentUser.email);
-        setOtherUser(other);
+
+        // getOtherUser is optional UI sugar; don't let it break startup
+        try {
+          const other = await getOtherUser(currentUser.email);
+          if (!cancelled) setOtherUser(other);
+        } catch (e) {
+          console.warn('getOtherUser failed (non-fatal):', e);
+        }
       }
-      setIsAuthChecking(false);
-    };
+    } catch (e) {
+      console.error('Auth check failed (non-fatal):', e);
+    } finally {
+      if (!cancelled) setIsAuthChecking(false);
+    }
+  };
 
-    checkAuth();
+  checkAuth();
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+  const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
+    try {
       if (event === 'SIGNED_IN' && session?.user) {
         const currentUser = await getCurrentUser();
-        if (currentUser) {
-          setUser(currentUser);
+        if (!currentUser) return;
+
+        setUser(currentUser);
+
+        try {
           const other = await getOtherUser(currentUser.email);
           setOtherUser(other);
+        } catch (e) {
+          console.warn('getOtherUser failed (non-fatal):', e);
         }
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
         setOtherUser(null);
       }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-// Load GeoJSON data on mount
-useEffect(() => {
-  const loadGeoJSON = async () => {
-    try {
-      const base = import.meta.env.BASE_URL; // "/travel-atlas/" in production
-
-      const [countriesRes, citiesRes] = await Promise.all([
-        fetch(`${base}data/countries.geojson`),
-        fetch(`${base}data/world_cities.geojson`),
-      ]);
-
-      if (countriesRes.ok) {
-        const data = await countriesRes.json();
-        setCountriesGeoJSON(data);
-      }
-
-      if (citiesRes.ok) {
-        const data = await citiesRes.json();
-        setWorldCities(data);
-      }
-    } catch (error) {
-      console.error('Error loading GeoJSON:', error);
+    } catch (e) {
+      console.error('onAuthStateChange handler failed:', e);
     }
-  };
+  });
 
-  loadGeoJSON();
+  return () => {
+    cancelled = true;
+    data?.subscription?.unsubscribe?.();
+  };
 }, []);
 
-useEffect(() => {
-  (window as any).__TA_DEBUG__ = {
-    ...(window as any).__TA_DEBUG__,
-    countriesLoaded: !!countriesGeoJSON,
-    countryCount: countriesGeoJSON?.features?.length ?? 0,
-  };
-}, [countriesGeoJSON]);
+  // Load GeoJSON data on mount
+  useEffect(() => {
+    const loadGeoJSON = async () => {
+      try {
+        const base = import.meta.env.BASE_URL; // "/travel-atlas/" in production
 
+        const [countriesRes, citiesRes] = await Promise.all([
+          fetch(`${base}data/countries.geojson`),
+          fetch(`${base}data/world_cities.geojson`),
+        ]);
+
+        if (countriesRes.ok) {
+          const data = await countriesRes.json();
+          setCountriesGeoJSON(data);
+        }
+
+        if (citiesRes.ok) {
+          const data = await citiesRes.json();
+          setWorldCities(data);
+        }
+      } catch (error) {
+        console.error('Error loading GeoJSON:', error);
+      }
+    };
+
+    loadGeoJSON();
+  }, []);
+
+  useEffect(() => {
+    (window as any).__TA_DEBUG__ = {
+      ...(window as any).__TA_DEBUG__,
+      countriesLoaded: !!countriesGeoJSON,
+      countryCount: countriesGeoJSON?.features?.length ?? 0,
+    };
+  }, [countriesGeoJSON]);
 
   // Fetch data when user is authenticated
   const fetchAllData = useCallback(async () => {
@@ -156,7 +211,7 @@ useEffect(() => {
       console.error('Error fetching data:', error);
       toast.error('Failed to load data');
     }
-  }, [user]);
+  }, [user, toast]);
 
   useEffect(() => {
     if (user) {
@@ -183,6 +238,45 @@ useEffect(() => {
     };
   }, [user, fetchAllData]);
 
+  // =========================
+  // Admin-aware country writes
+  // =========================
+  const getTargetUserIds = useCallback((): string[] => {
+    if (!user) return [];
+
+    // Non-admin sessions always act as current user
+    if (!isAdmin) return [user.id];
+
+    // Admin off or acting as me -> current user only
+    if (!adminMode || actingAs === 'me') return [user.id];
+
+    if (actingAs === 'viktoria') return [VIKTORIA_USER_ID];
+    return [user.id, VIKTORIA_USER_ID]; // both
+  }, [user, isAdmin, adminMode, actingAs]);
+
+  const adminAwareSetCountryFlag = useCallback(async (isoA3: string, flag: 'want' | 'been', value: boolean) => {
+    if (!user) return;
+
+    const targets = getTargetUserIds();
+
+    // If only current user, use existing RPC for normal behavior
+    if (targets.length === 1 && targets[0] === user.id) {
+      await setCountryFlag(isoA3, flag, value);
+      return;
+    }
+
+    // Otherwise admin path: write for each target user id
+    for (const targetId of targets) {
+      const { error } = await supabase.rpc('admin_set_country_flag', {
+        p_iso_a3: isoA3,
+        p_flag: flag,
+        p_value: value,
+        p_target_user_id: targetId,
+      });
+      if (error) throw error;
+    }
+  }, [user, getTargetUserIds]);
+
   // Handlers
   const handleCountryClick = useCallback((isoA3: string) => {
     setSelection({ type: 'country', id: isoA3 });
@@ -197,7 +291,6 @@ useEffect(() => {
   }, []);
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
-    // Show POI form
     setShowPOIForm({ lat, lng });
   }, []);
 
@@ -208,9 +301,7 @@ useEffect(() => {
   // Country select from search (zoom and select)
   const handleCountrySelect = useCallback((isoA3: string, bbox: [number, number, number, number]) => {
     setSelection({ type: 'country', id: isoA3 });
-    // Set focusCountry to trigger zoom, then clear it
     setFocusCountry({ isoA3, bbox });
-    // Clear after a short delay to allow re-selection of same country
     setTimeout(() => setFocusCountry(null), 800);
   }, []);
 
@@ -220,15 +311,22 @@ useEffect(() => {
 
     setIsLoading(true);
     try {
-      // If setting "been" to true, also set "want" to false
       if (flag === 'been' && value) {
-        await setCountryFlag(isoA3, 'want', false);
-        await setCountryFlag(isoA3, 'been', true);
+        await adminAwareSetCountryFlag(isoA3, 'want', false);
+        await adminAwareSetCountryFlag(isoA3, 'been', true);
       } else {
-        await setCountryFlag(isoA3, flag, value);
+        await adminAwareSetCountryFlag(isoA3, flag, value);
       }
 
-      // Optimistic update
+      // If we acted as someone other than "me", re-sync from DB (avoid wrong optimistic write)
+      if (isAdmin && adminMode && actingAs !== 'me') {
+        await fetchAllData();
+        toast.success('Saved');
+        setIsLoading(false);
+        return;
+      }
+
+      // Optimistic update (me-only)
       setCountriesState(prev => {
         const existing = prev.find(s => s.iso_a3 === isoA3);
         if (existing) {
@@ -236,7 +334,6 @@ useEffect(() => {
             if (s.iso_a3 !== isoA3) return s;
             const updated = { ...s };
             if (flag === 'been' && value) {
-              // Been true turns off want
               updated.want_by = { ...s.want_by, [user.id]: false };
               updated.been_by = { ...s.been_by, [user.id]: true };
             } else {
@@ -261,9 +358,9 @@ useEffect(() => {
       toast.error('Failed to save');
     }
     setIsLoading(false);
-  }, [user, toast]);
+  }, [user, isAdmin, adminMode, actingAs, adminAwareSetCountryFlag, fetchAllData, toast]);
 
-  // City flag toggle
+  // City flag toggle (unchanged for now)
   const handleCityFlagToggle = useCallback(async (cityId: string, flag: 'want' | 'been', value: boolean) => {
     if (!user) return;
 
@@ -271,7 +368,6 @@ useEffect(() => {
     try {
       await setCityFlag(cityId, flag, value);
 
-      // Optimistic update
       setCities(prev => prev.map(c => {
         if (c.id !== cityId) return c;
         const flagKey = flag === 'want' ? 'want_by' : 'been_by';
@@ -338,7 +434,6 @@ useEffect(() => {
     try {
       await updatePOIAsCreator(poiId, updates);
 
-      // Optimistic update
       setPOIs(prev => prev.map(p => {
         if (p.id !== poiId) return p;
         return { ...p, ...updates };
@@ -360,7 +455,6 @@ useEffect(() => {
     try {
       await setPOIEndorsement(poiId, value);
 
-      // Optimistic update
       setPOIs(prev => prev.map(p => {
         if (p.id !== poiId) return p;
         return {
@@ -427,7 +521,6 @@ useEffect(() => {
     if (type === 'city') {
       setIsLoading(true);
       try {
-        // Find country ISO from coordinates using the countries GeoJSON
         const countryIsoA3 = countriesGeoJSON
           ? findCountryIsoA3(countriesGeoJSON, result.lat, result.lng)
           : null;
@@ -452,87 +545,83 @@ useEffect(() => {
       }
       setIsLoading(false);
     } else if (type === 'poi') {
-      // Show POI form with pre-filled location
       setShowPOIForm({ lat: result.lat, lng: result.lng });
     }
   }, [user, countriesGeoJSON, toast]);
 
-// Submit POI form
-const handlePOIFormSubmit = useCallback(async (poi: {
-  label: string;
-  lat: number;
-  lng: number;
-  status: 'want' | 'been';
-  category_id: string | null;
-  priority: 'low' | 'med' | 'high' | null;
-  notes: string | null;
-  links: POILink[];
-}) => {
-  if (!user) return;
+  // Submit POI form
+  const handlePOIFormSubmit = useCallback(async (poi: {
+    label: string;
+    lat: number;
+    lng: number;
+    status: 'want' | 'been';
+    category_id: string | null;
+    priority: 'low' | 'med' | 'high' | null;
+    notes: string | null;
+    links: POILink[];
+  }) => {
+    if (!user) return;
 
-  setIsLoading(true);
-  try {
-    const isoA3 =
-      countriesGeoJSON
-        ? findCountryIsoA3(countriesGeoJSON, poi.lat, poi.lng)
-        : null;
+    setIsLoading(true);
+    try {
+      const isoA3 =
+        countriesGeoJSON
+          ? findCountryIsoA3(countriesGeoJSON, poi.lat, poi.lng)
+          : null;
 
-    const newPOI = await createPOI({
-      ...poi,
-      country_iso_a3: isoA3,
-      city_id: null,
-    });
+      const newPOI = await createPOI({
+        ...poi,
+        country_iso_a3: isoA3,
+        city_id: null,
+      });
 
-    if (newPOI) {
-      setPOIs(prev => [newPOI, ...prev]);
-      setShowPOIForm(null);
-      setSelection({ type: 'poi', id: newPOI.id });
-      toast.success('POI added');
+      if (newPOI) {
+        setPOIs(prev => [newPOI, ...prev]);
+        setShowPOIForm(null);
+        setSelection({ type: 'poi', id: newPOI.id });
+        toast.success('POI added');
 
-      // Auto-mark the country with the same status as the POI
-      if (isoA3) {
-        try {
-          const flag = poi.status; // 'want' or 'been'
-          await setCountryFlag(isoA3, flag, true);
-          // If been, also turn off want
-          if (flag === 'been') {
-            await setCountryFlag(isoA3, 'want', false);
-          }
-          // Optimistic update for country state
-          setCountriesState(prev => {
-            const existing = prev.find(s => s.iso_a3 === isoA3);
-            if (existing) {
-              return prev.map(s => {
-                if (s.iso_a3 !== isoA3) return s;
-                const updated = { ...s };
-                if (flag === 'been') {
-                  updated.want_by = { ...s.want_by, [user.id]: false };
-                  updated.been_by = { ...s.been_by, [user.id]: true };
-                } else {
-                  updated.want_by = { ...s.want_by, [user.id]: true };
-                }
-                return updated;
-              });
-            } else {
-              return [...prev, {
-                iso_a3: isoA3,
-                want_by: flag === 'want' ? { [user.id]: true } : {},
-                been_by: flag === 'been' ? { [user.id]: true } : {},
-              }];
+        // Auto-mark the country with the same status as the POI (me-only as-is)
+        if (isoA3) {
+          try {
+            const flag = poi.status;
+            await setCountryFlag(isoA3, flag, true);
+            if (flag === 'been') {
+              await setCountryFlag(isoA3, 'want', false);
             }
-          });
-        } catch {
-          // Non-critical - don't fail POI creation
-          console.warn('Failed to auto-mark country');
+            setCountriesState(prev => {
+              const existing = prev.find(s => s.iso_a3 === isoA3);
+              if (existing) {
+                return prev.map(s => {
+                  if (s.iso_a3 !== isoA3) return s;
+                  const updated = { ...s };
+                  if (flag === 'been') {
+                    updated.want_by = { ...s.want_by, [user.id]: false };
+                    updated.been_by = { ...s.been_by, [user.id]: true };
+                  } else {
+                    updated.want_by = { ...s.want_by, [user.id]: true };
+                  }
+                  return updated;
+                });
+              } else {
+                return [...prev, {
+                  iso_a3: isoA3,
+                  want_by: flag === 'want' ? { [user.id]: true } : {},
+                  been_by: flag === 'been' ? { [user.id]: true } : {},
+                }];
+              }
+            });
+          } catch {
+            console.warn('Failed to auto-mark country');
+          }
         }
       }
+    } catch (error) {
+      console.error('Error creating POI:', error);
+      toast.error('Failed to add POI');
     }
-  } catch (error) {
-    console.error('Error creating POI:', error);
-    toast.error('Failed to add POI');
-  }
-  setIsLoading(false);
-}, [user, countriesGeoJSON, toast]);
+    setIsLoading(false);
+  }, [user, countriesGeoJSON, toast]);
 
   // Show auth screen if not logged in
   if (isAuthChecking) {
@@ -550,6 +639,28 @@ const handlePOIFormSubmit = useCallback(async (poi: {
 
   return (
     <div className="app">
+      {/* Admin controls (Myles only) */}
+      {isAdmin && (
+        <div className="admin-panel" style={{ padding: 8, display: 'flex', gap: 12, alignItems: 'center' }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={adminMode}
+              onChange={e => setAdminMode(e.target.checked)}
+            />
+            Admin setup mode
+          </label>
+
+          {adminMode && (
+            <select value={actingAs} onChange={e => setActingAs(e.target.value as ActingAs)}>
+              <option value="me">Myles</option>
+              <option value="viktoria">Viktoria</option>
+              <option value="both">Both</option>
+            </select>
+          )}
+        </div>
+      )}
+
       <TravelMap
         user={user}
         otherUser={otherUser}
