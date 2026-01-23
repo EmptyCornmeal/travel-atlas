@@ -9,8 +9,9 @@ import type { CountryState, City, POI, Category, POILink, User } from '../types'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-// User name/color mapping by email (JSON in env)
-const USER_CONFIG: Record<string, { name: string; color: 'blue' | 'red' }> = {};
+// User name/color/(optional id) mapping by email (JSON in env)
+type UserCfg = { id?: string; name: string; color: 'blue' | 'red' };
+const USER_CONFIG: Record<string, UserCfg> = {};
 
 const userConfigStr = import.meta.env.VITE_USER_CONFIG || '';
 if (userConfigStr) {
@@ -33,7 +34,7 @@ export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON
   },
 });
 
-// Expose for debugging in console
+// Expose for debugging in console (optional; remove when done-done)
 (window as any).supabase = supabase;
 
 // =========================
@@ -57,11 +58,15 @@ function isAbortError(err: any): boolean {
 // User helpers
 // =========================
 export function isEmailAllowlisted(_email: string): boolean {
+  // For a private 2-user app you can keep this open.
+  // If you want to lock it down later:
+  // return Boolean(USER_CONFIG[_email.toLowerCase()]);
   return true;
 }
 
-export function getUserInfo(email: string): { name: string; color: 'blue' | 'red' } {
-  const cfg = USER_CONFIG[email.toLowerCase()];
+export function getUserInfo(email: string): { id?: string; name: string; color: 'blue' | 'red' } {
+  const key = email.toLowerCase();
+  const cfg = USER_CONFIG[key];
   if (cfg) return cfg;
   return { name: email.split('@')[0], color: 'blue' };
 }
@@ -73,7 +78,7 @@ export function toAppUser(supabaseUser: SupabaseUser): User | null {
   const info = getUserInfo(email);
 
   return {
-    id: supabaseUser.id,
+    id: supabaseUser.id, // ✅ canonical id from auth
     email,
     name: info.name,
     color: info.color,
@@ -140,15 +145,26 @@ export async function getCurrentUser(): Promise<User | null> {
 
 /**
  * "Other user" is optional sugar for UI. We derive it from VITE_USER_CONFIG keys.
+ * IMPORTANT: Provide the other user's real UUID via VITE_USER_CONFIG so lookups work.
  */
 export async function getOtherUser(currentEmail: string): Promise<User | null> {
-  const emails = Object.keys(USER_CONFIG).map(e => e.toLowerCase());
-  const otherEmail = emails.find(e => e !== currentEmail.toLowerCase());
+  const current = currentEmail.toLowerCase();
+
+  const otherEmail = Object.keys(USER_CONFIG)
+    .map(e => e.toLowerCase())
+    .find(e => e !== current);
+
   if (!otherEmail) return null;
 
   const info = getUserInfo(otherEmail);
+
+  // Fail loudly if config drifts
+  if (!info.id) {
+    console.warn(`Missing id for other user ${otherEmail} in VITE_USER_CONFIG`);
+  }
+
   return {
-    id: '',
+    id: info.id ?? '',
     email: otherEmail,
     name: info.name,
     color: info.color,
