@@ -127,6 +127,14 @@ useEffect(() => {
   loadGeoJSON();
 }, []);
 
+useEffect(() => {
+  (window as any).__TA_DEBUG__ = {
+    ...(window as any).__TA_DEBUG__,
+    countriesLoaded: !!countriesGeoJSON,
+    countryCount: countriesGeoJSON?.features?.length ?? 0,
+  };
+}, [countriesGeoJSON]);
+
 
   // Fetch data when user is authenticated
   const fetchAllData = useCallback(async () => {
