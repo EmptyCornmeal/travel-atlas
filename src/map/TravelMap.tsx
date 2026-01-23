@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
-import type { Map, GeoJSONSource, MapMouseEvent, LngLatLike } from 'maplibre-gl';
+import type { Map, GeoJSONSource, MapMouseEvent, LngLatLike, MapGeoJSONFeature } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { CountryState, City, POI, User, FilterState, LayerVisibility, Selection } from '../types';
 import { USER_COLORS } from '../types';
@@ -16,6 +16,7 @@ interface TravelMapProps {
   layers: LayerVisibility;
   selection: Selection;
   focusCountry?: { isoA3: string; bbox: [number, number, number, number] } | null;
+  focusLocation?: { lat: number; lng: number; zoom?: number } | null;
   onCountryClick: (isoA3: string) => void;
   onCityClick: (cityId: string) => void;
   onPOIClick: (poiId: string) => void;
@@ -67,6 +68,7 @@ export function TravelMap({
   layers,
   selection,
   focusCountry,
+  focusLocation,
   onCountryClick,
   onCityClick,
   onPOIClick,
@@ -75,6 +77,24 @@ export function TravelMap({
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<Map | null>(null);
   const loaded = useRef(false);
+
+  const getSmallestCountryFeature = useCallback((features?: MapGeoJSONFeature[]) => {
+    if (!features?.length) return undefined;
+
+    let smallestFeature: MapGeoJSONFeature | undefined;
+    let smallestArea = Number.POSITIVE_INFINITY;
+
+    features.forEach(feature => {
+      if (!feature?.properties?.iso_a3) return;
+      const featureArea = area(feature as GeoJSON.Feature);
+      if (featureArea < smallestArea) {
+        smallestArea = featureArea;
+        smallestFeature = feature;
+      }
+    });
+
+    return smallestFeature;
+  }, []);
 
   // Initialize map
   useEffect(() => {
@@ -344,9 +364,9 @@ export function TravelMap({
     const countryLayers = ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline'];
     countryLayers.forEach(layerId => {
       mapInstance.on('click', layerId, (e: MapMouseEvent) => {
-        const feature = (e as any).features?.[0];
-        if (feature?.properties?.iso_a3) {
-          onCountryClick(feature.properties.iso_a3);
+        const smallestFeature = getSmallestCountryFeature((e as any).features);
+        if (smallestFeature?.properties?.iso_a3) {
+          onCountryClick(smallestFeature.properties.iso_a3);
         }
       });
     });
@@ -405,7 +425,7 @@ export function TravelMap({
         mapInstance.getCanvas().style.cursor = '';
       });
     });
-  }, [onCountryClick, onCityClick, onPOIClick, onMapClick]);
+  }, [getSmallestCountryFeature, onCountryClick, onCityClick, onPOIClick, onMapClick]);
 
   // Load base GeoJSON and merge with state
   useEffect(() => {
@@ -439,6 +459,17 @@ export function TravelMap({
       { padding: 40, duration: 700 }
     );
   }, [focusCountry]);
+
+  // Zoom to a specific location (e.g., newly added city)
+  useEffect(() => {
+    if (!map.current || !loaded.current || !focusLocation) return;
+
+    map.current.easeTo({
+      center: [focusLocation.lng, focusLocation.lat],
+      zoom: focusLocation.zoom ?? 6,
+      duration: 700,
+    });
+  }, [focusLocation]);
 
   // Load and process countries data
   const loadCountriesData = useCallback(async () => {

@@ -77,6 +77,7 @@ function App() {
   const [focusCountry, setFocusCountry] = useState<{ isoA3: string; bbox: [number, number, number, number] } | null>(
     null
   );
+  const [focusLocation, setFocusLocation] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
 
   // Admin UI state (persist on this device)
   const [adminMode, setAdminMode] = useState<boolean>(() => localStorage.getItem(LS_ADMIN_MODE) === '1');
@@ -639,6 +640,8 @@ function App() {
         if (newCity) {
           setCities(prev => [newCity, ...prev]);
           setSelection({ type: 'city', id: newCity.id });
+          setFocusLocation({ lat: newCity.lat, lng: newCity.lng, zoom: 6 });
+          setTimeout(() => setFocusLocation(null), 800);
           toast.success('City added');
         }
       } catch (error) {
@@ -782,6 +785,7 @@ function App() {
         layers={layers}
         selection={selection}
         focusCountry={focusCountry}
+        focusLocation={focusLocation}
         onCountryClick={handleCountryClick}
         onCityClick={handleCityClick}
         onPOIClick={handlePOIClick}

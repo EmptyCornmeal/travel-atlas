@@ -39,6 +39,7 @@ export function POIForm({
   const [newLinkLabel, setNewLinkLabel] = useState('');
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [isLoadingLabel, setIsLoadingLabel] = useState(false);
+  const [hasEditedLabel, setHasEditedLabel] = useState(false);
 
   // Auto-suggest label from reverse geocoding
   useEffect(() => {
@@ -46,13 +47,13 @@ export function POIForm({
       setIsLoadingLabel(true);
       const result = await reverseGeocode(lat, lng);
       if (result) {
-        setLabel(result.name);
+        setLabel(prev => (prev.trim() || hasEditedLabel ? prev : result.name));
       }
       setIsLoadingLabel(false);
     };
 
     fetchLabel();
-  }, [lat, lng]);
+  }, [lat, lng, hasEditedLabel]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,7 +107,10 @@ export function POIForm({
               id="label"
               type="text"
               value={label}
-              onChange={e => setLabel(e.target.value)}
+              onChange={e => {
+                setHasEditedLabel(true);
+                setLabel(e.target.value);
+              }}
               placeholder={isLoadingLabel ? 'Loading suggestion...' : 'Enter a name for this place'}
               required
             />
