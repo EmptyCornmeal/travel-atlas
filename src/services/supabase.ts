@@ -83,6 +83,27 @@ export function toAppUser(supabaseUser: SupabaseUser): User | null {
 // =========================
 // Auth
 // =========================
+
+/** Sign in with email + password (primary method) */
+export async function signInWithPassword(email: string, password: string): Promise<{ error: Error | null }> {
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Send password reset email */
+export async function sendPasswordReset(email: string): Promise<{ error: Error | null }> {
+  const redirectTo = window.location.origin + import.meta.env.BASE_URL;
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Update current user's password (used after clicking reset link) */
+export async function updateMyPassword(password: string): Promise<{ error: Error | null }> {
+  const { error } = await supabase.auth.updateUser({ password });
+  return { error: error ? new Error(error.message) : null };
+}
+
+/** Sign in with magic link (fallback method) */
 export async function signInWithMagicLink(email: string): Promise<{ error: Error | null }> {
   const redirectTo = window.location.origin + import.meta.env.BASE_URL;
 
