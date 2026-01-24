@@ -1013,6 +1013,10 @@ function App() {
             <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.purple.solid }}></span>
             <span>Both</span>
           </div>
+          <div className="legend-row">
+            <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.mixed.solid }}></span>
+            <span>Mixed status</span>
+          </div>
           <span className="legend-label">Countries</span>
           <div className="legend-row">
             <span className="legend-swatch solid"></span>
@@ -1027,15 +1031,29 @@ function App() {
             <span>Unmarked</span>
           </div>
           <span className="legend-label">Cities</span>
-          <div className="legend-row">
-            <span className="legend-swatch city-solid"></span>
-            <span>Visited</span>
+          <div className="legend-row legend-row-multi">
+            <span className="legend-row-label">Visited</span>
+            <div className="legend-row-swatches">
+              <span className="legend-swatch city-solid" style={{ borderColor: USER_COLORS.blue.dark, backgroundColor: USER_COLORS.blue.solid }}></span>
+              <span className="legend-swatch city-solid" style={{ borderColor: USER_COLORS.red.dark, backgroundColor: USER_COLORS.red.solid }}></span>
+              <span className="legend-swatch city-solid" style={{ borderColor: USER_COLORS.purple.dark, backgroundColor: USER_COLORS.purple.solid }}></span>
+              <span className="legend-swatch city-solid" style={{ borderColor: USER_COLORS.mixed.dark, backgroundColor: USER_COLORS.mixed.solid }}></span>
+            </div>
           </div>
-          <div className="legend-row">
-            <span className="legend-swatch city-hollow"></span>
-            <span>Want to visit</span>
+          <div className="legend-row legend-row-multi">
+            <span className="legend-row-label">Want to visit</span>
+            <div className="legend-row-swatches">
+              <span className="legend-swatch city-hollow city-outline" style={{ borderColor: USER_COLORS.blue.dark }}></span>
+              <span className="legend-swatch city-hollow city-outline" style={{ borderColor: USER_COLORS.red.dark }}></span>
+              <span className="legend-swatch city-hollow city-outline" style={{ borderColor: USER_COLORS.purple.dark }}></span>
+              <span className="legend-swatch city-hollow city-outline" style={{ borderColor: USER_COLORS.mixed.dark }}></span>
+            </div>
           </div>
           <span className="legend-label">POIs</span>
+          <div className="legend-row">
+            <span className="legend-swatch poi-solid" style={{ backgroundColor: USER_COLORS.purple.solid }}></span>
+            <span>Both (endorsed)</span>
+          </div>
           <div className="legend-row">
             <span className="legend-swatch poi-solid"></span>
             <span>Visited</span>
