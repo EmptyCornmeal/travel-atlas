@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { bbox as getBbox } from '@turf/turf';
 import type { CountryState, City, POI, Category, User, Selection, POILink } from '../types';
-import type { GeocodingResult } from '../services/geocoding';
+import { debounce, searchPlaces, type GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
 import './RightPanel.css';
 
@@ -377,6 +378,10 @@ function CountryDetails({
     f => f.properties?.iso_a3 === isoA3
   );
   const countryName = countryFeature?.properties?.name || isoA3;
+  const countryBounds = useMemo(() => {
+    if (!countryFeature) return null;
+    return getBbox(countryFeature) as [number, number, number, number];
+  }, [countryFeature]);
 
   const userWant = state?.want_by?.[user.id] === true;
   const userBeen = state?.been_by?.[user.id] === true;
@@ -464,6 +469,7 @@ function CountryDetails({
       <CountryCityManager
         isoA3={isoA3}
         countryName={countryName}
+        countryBounds={countryBounds}
         user={user}
         cities={cities}
         worldCities={worldCities}
@@ -486,9 +492,51 @@ function CountryDetails({
   );
 }
 
+const CITY_TYPE_LABELS: Record<string, string> = {
+  city: 'City',
+  town: 'Town',
+  village: 'Village',
+  municipality: 'Municipality',
+};
+
+function looksLikeSettlement(result: GeocodingResult): boolean {
+  const name = result.name?.trim().toLowerCase();
+  if (!name) return false;
+  const country = result.country?.trim().toLowerCase();
+  if (country && name === country) return false;
+  const firstChunk = result.displayName.split(',')[0]?.trim().toLowerCase();
+  if (country && firstChunk === country) return false;
+  return true;
+}
+
+function isCityLikeResult(result: GeocodingResult): boolean {
+  const placeType = result.placeType?.toLowerCase();
+  const placeClass = result.placeClass?.toLowerCase();
+
+  if (result.type === 'city') return true;
+
+  if (placeClass === 'place' && placeType && placeType in CITY_TYPE_LABELS) {
+    return true;
+  }
+
+  if (placeType === 'administrative') {
+    return looksLikeSettlement(result);
+  }
+
+  return false;
+}
+
+function formatResultSubtitle(result: GeocodingResult, fallbackCountry: string): string {
+  const placeType = result.placeType?.toLowerCase();
+  const typeLabel = (placeType && CITY_TYPE_LABELS[placeType]) || 'City';
+  const country = result.country || fallbackCountry;
+  return country ? `${typeLabel} · ${country}` : typeLabel;
+}
+
 function CountryCityManager({
   isoA3,
   countryName,
+  countryBounds,
   user,
   cities,
   worldCities,
@@ -503,6 +551,7 @@ function CountryCityManager({
 }: {
   isoA3: string;
   countryName: string;
+  countryBounds: [number, number, number, number] | null;
   user: User;
   cities: City[];
   worldCities: GeoJSON.FeatureCollection | null;
@@ -523,7 +572,9 @@ function CountryCityManager({
 }) {
   const [cityQuery, setCityQuery] = useState('');
   const [cityStatus, setCityStatus] = useState<'want' | 'been'>(defaultStatus);
+  const [geocodingResults, setGeocodingResults] = useState<GeocodingResult[]>([]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const latestQueryRef = useRef('');
 
   useEffect(() => {
     setCityStatus(defaultStatus);
@@ -571,6 +622,8 @@ function CountryCityManager({
         lng,
         country: featureCountry,
         type: 'city',
+        placeClass: 'place',
+        placeType: 'city',
       });
 
       if (matches.length >= 8) break;
@@ -578,6 +631,79 @@ function CountryCityManager({
 
     return matches;
   }, [worldCities, cityQuery, countryName]);
+
+  useEffect(() => {
+    latestQueryRef.current = cityQuery.trim();
+  }, [cityQuery]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const query = cityQuery.trim();
+    if (query.length < 2) return;
+    console.info('[city search] local cities dataset', {
+      query,
+      country: countryName,
+      results: matchingCities.length,
+    });
+  }, [cityQuery, countryName, matchingCities.length]);
+
+  const fetchGeocoderFallback = useMemo(
+    () =>
+      debounce(async (query: string, bounds: [number, number, number, number] | null) => {
+        const results = await searchPlaces(query, {
+          bounds: bounds ?? undefined,
+          countryName,
+          limit: 8,
+        });
+
+        if (latestQueryRef.current !== query) return;
+
+        const filtered = results.filter(result => isCityLikeResult(result));
+        setGeocodingResults(filtered);
+
+        if (import.meta.env.DEV) {
+          console.info('[city search] geocoder fallback', {
+            query,
+            country: countryName,
+            results: filtered.length,
+          });
+        }
+      }, 350),
+    [countryName]
+  );
+
+  useEffect(() => {
+    const query = cityQuery.trim();
+
+    if (query.length < 2) {
+      setGeocodingResults([]);
+      return;
+    }
+
+    if (matchingCities.length >= 3) {
+      setGeocodingResults([]);
+      return;
+    }
+
+    fetchGeocoderFallback(query, countryBounds);
+  }, [cityQuery, matchingCities.length, countryBounds, fetchGeocoderFallback]);
+
+  const combinedResults = useMemo(() => {
+    const seen = new Set<string>();
+    const combined: GeocodingResult[] = [];
+
+    const addResult = (result: GeocodingResult) => {
+      const key = `${result.name.toLowerCase()}-${result.lat.toFixed(3)}-${result.lng.toFixed(3)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      combined.push(result);
+    };
+
+    matchingCities.forEach(addResult);
+    geocodingResults.forEach(addResult);
+
+    return combined.slice(0, 8);
+  }, [matchingCities, geocodingResults]);
 
   const handleAddCity = (result: GeocodingResult) => {
     onCityAdd({
@@ -652,8 +778,8 @@ function CountryCityManager({
 
         {cityQuery.trim().length >= 2 && (
           <ul className="city-search-results">
-            {matchingCities.length > 0 ? (
-              matchingCities.map(result => {
+            {combinedResults.length > 0 ? (
+              combinedResults.map(result => {
                 const alreadyAdded = isAlreadyAdded(result);
                 return (
                   <li key={result.id}>
@@ -664,7 +790,7 @@ function CountryCityManager({
                     >
                       <span>
                         {result.name}
-                        <span className="city-result-sub">{result.country}</span>
+                        <span className="city-result-sub">{formatResultSubtitle(result, countryName)}</span>
                       </span>
                       <span className="city-result-action">{alreadyAdded ? 'Added' : 'Add'}</span>
                     </button>

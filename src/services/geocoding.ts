@@ -35,6 +35,8 @@ export interface GeocodingResult {
   country?: string;
   countryCode?: string;
   type: 'city' | 'poi' | 'other';
+  placeClass?: string;
+  placeType?: string;
 }
 
 // Throttle requests to respect Nominatim rate limits
@@ -101,6 +103,8 @@ export async function searchPlaces(query: string, options: SearchOptions = {}): 
       country: r.address?.country,
       countryCode: r.address?.country_code?.toUpperCase(),
       type: inferResultType(r),
+      placeClass: r.class,
+      placeType: r.type,
     }));
   } catch (error) {
     console.error('Geocoding error:', error);
@@ -142,6 +146,8 @@ export async function reverseGeocode(lat: number, lng: number): Promise<Geocodin
       country: result.address?.country,
       countryCode: result.address?.country_code?.toUpperCase(),
       type: inferResultType(result),
+      placeClass: result.class,
+      placeType: result.type,
     };
   } catch (error) {
     console.error('Reverse geocoding error:', error);
