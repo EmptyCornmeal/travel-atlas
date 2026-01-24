@@ -1,8 +1,14 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import type { FilterState, LayerVisibility, Category, User } from '../types';
 import { searchPlaces, debounce, type GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
 import './LeftPanel.css';
+
+type SelectedCountry = {
+  isoA3: string;
+  name: string;
+  bounds: [number, number, number, number];
+};
 
 interface LeftPanelProps {
   user: User;
@@ -10,10 +16,13 @@ interface LeftPanelProps {
   filters: FilterState;
   layers: LayerVisibility;
   categories: Category[];
+  selectedCountry: SelectedCountry | null;
+  isDropPinMode: boolean;
   onFiltersChange: (filters: FilterState) => void;
   onLayersChange: (layers: LayerVisibility) => void;
   onSearchResultPreview: (result: GeocodingResult) => void;
   onSearchReset: () => void;
+  onStartDropPin: () => void;
 }
 
 export function LeftPanel({
@@ -22,15 +31,27 @@ export function LeftPanel({
   filters,
   layers,
   categories,
+  selectedCountry,
+  isDropPinMode,
   onFiltersChange,
   onLayersChange,
   onSearchResultPreview,
   onSearchReset,
+  onStartDropPin,
 }: LeftPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<GeocodingResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchWithinCountry, setSearchWithinCountry] = useState(!!selectedCountry);
   const [activeTab, setActiveTab] = useState<'filters' | 'legend'>('filters');
+
+  useEffect(() => {
+    if (selectedCountry) {
+      setSearchWithinCountry(true);
+      return;
+    }
+    setSearchWithinCountry(false);
+  }, [selectedCountry]);
 
   // Search Nominatim for places (POI-focused)
   const performSearch = useCallback(async (query: string) => {
@@ -42,7 +63,11 @@ export function LeftPanel({
     setIsSearching(true);
 
     try {
-      const nominatimResults = await searchPlaces(query, 10);
+      const nominatimResults = await searchPlaces(query, {
+        limit: 20,
+        bounds: searchWithinCountry && selectedCountry ? selectedCountry.bounds : undefined,
+        countryName: searchWithinCountry && selectedCountry ? selectedCountry.name : undefined,
+      });
       const filtered = nominatimResults.filter(result => {
         if (result.type === 'city') return false;
         if (result.type === 'other' && result.country) {
@@ -50,20 +75,26 @@ export function LeftPanel({
         }
         return true;
       });
-      setSearchResults(filtered.slice(0, 10));
+      setSearchResults(filtered.slice(0, 12));
     } catch (error) {
       console.error('Search error:', error);
       setSearchResults([]);
     }
 
     setIsSearching(false);
-  }, []);
+  }, [searchWithinCountry, selectedCountry]);
 
   // Debounced search
   const debouncedSearch = useMemo(
     () => debounce((query: string) => performSearch(query), 300),
     [performSearch]
   );
+
+  useEffect(() => {
+    if (searchQuery.trim().length >= 2) {
+      debouncedSearch(searchQuery);
+    }
+  }, [searchWithinCountry, selectedCountry, searchQuery, debouncedSearch]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;
@@ -121,6 +152,23 @@ export function LeftPanel({
             </button>
           )}
         </div>
+        <div className="search-options">
+          <label className={`toggle-label ${!selectedCountry ? 'disabled' : ''}`}>
+            <input
+              type="checkbox"
+              checked={searchWithinCountry}
+              onChange={() => setSearchWithinCountry(prev => !prev)}
+              disabled={!selectedCountry}
+            />
+            <span>
+              Search within selected country
+              {selectedCountry ? ` (${selectedCountry.name})` : ''}
+            </span>
+          </label>
+          {!selectedCountry && (
+            <span className="search-helper">Select a country to enable local search.</span>
+          )}
+        </div>
         {isSearching && <div className="search-loading">Searching...</div>}
 
         {searchResults.length > 0 && (
@@ -137,6 +185,19 @@ export function LeftPanel({
               </li>
             ))}
           </ul>
+        )}
+        {!isSearching && searchQuery.trim().length >= 2 && searchResults.length === 0 && (
+          <div className="search-empty">
+            <p>No results yet. Try a different spelling or switch off the country filter.</p>
+            <button className="secondary-action" onClick={onStartDropPin}>
+              Add POI by clicking the map
+            </button>
+          </div>
+        )}
+        {isDropPinMode && (
+          <div className="search-pin-mode">
+            Click the map to drop a pin for a new POI.
+          </div>
         )}
       </div>
 
