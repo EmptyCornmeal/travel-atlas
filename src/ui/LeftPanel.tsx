@@ -1,18 +1,8 @@
 import { useState, useCallback, useMemo } from 'react';
-import bbox from '@turf/bbox';
 import type { FilterState, LayerVisibility, Category, User } from '../types';
 import { searchPlaces, debounce, type GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
 import './LeftPanel.css';
-
-// Country search result type
-export interface CountrySearchResult {
-  id: string;
-  isoA3: string;
-  name: string;
-  bbox: [number, number, number, number]; // [minLng, minLat, maxLng, maxLat]
-  type: 'country';
-}
 
 interface LeftPanelProps {
   user: User;
@@ -20,12 +10,9 @@ interface LeftPanelProps {
   filters: FilterState;
   layers: LayerVisibility;
   categories: Category[];
-  countriesGeoJSON: GeoJSON.FeatureCollection | null;
-  worldCities: GeoJSON.FeatureCollection | null;
   onFiltersChange: (filters: FilterState) => void;
   onLayersChange: (layers: LayerVisibility) => void;
   onSearchResultPreview: (result: GeocodingResult) => void;
-  onCountrySelect: (isoA3: string, bbox: [number, number, number, number]) => void;
   onSearchReset: () => void;
 }
 
@@ -35,129 +22,42 @@ export function LeftPanel({
   filters,
   layers,
   categories,
-  countriesGeoJSON,
-  worldCities,
   onFiltersChange,
   onLayersChange,
   onSearchResultPreview,
-  onCountrySelect,
   onSearchReset,
 }: LeftPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [countryResults, setCountryResults] = useState<CountrySearchResult[]>([]);
   const [searchResults, setSearchResults] = useState<GeocodingResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [activeTab, setActiveTab] = useState<'filters' | 'legend'>('filters');
 
-  const normalizeCoordinates = (coords: number[]): { lat: number; lng: number } | null => {
-    if (coords.length < 2) return null;
-    const [x, y] = coords;
-
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-
-    if (Math.abs(x) <= 180 && Math.abs(y) <= 90) {
-      return { lat: y, lng: x };
-    }
-
-    const originShift = 20037508.34;
-    const lng = (x / originShift) * 180;
-    const lat = (y / originShift) * 180;
-    const latRadians = (Math.PI / 180) * lat;
-    const latDegrees =
-      (180 / Math.PI) * (2 * Math.atan(Math.exp(latRadians)) - Math.PI / 2);
-
-    if (!Number.isFinite(lng) || !Number.isFinite(latDegrees)) return null;
-
-    return { lat: latDegrees, lng };
-  };
-
-  // Search countries, then world cities, then fall back to Nominatim
+  // Search Nominatim for places (POI-focused)
   const performSearch = useCallback(async (query: string) => {
     if (!query.trim() || query.length < 2) {
-      setCountryResults([]);
       setSearchResults([]);
       return;
     }
 
     setIsSearching(true);
-    const lowerQuery = query.toLowerCase();
 
-    // First, search countries by name
-    const matchedCountries: CountrySearchResult[] = [];
-    if (countriesGeoJSON) {
-      countriesGeoJSON.features.forEach(feature => {
-        const name = feature.properties?.name || '';
-        const isoA3 = feature.properties?.iso_a3;
-
-        if (isoA3 && name.toLowerCase().includes(lowerQuery)) {
-          // Compute bbox for the country
-          const featureBbox = bbox(feature as any) as [number, number, number, number];
-          matchedCountries.push({
-            id: `country-${isoA3}`,
-            isoA3,
-            name,
-            bbox: featureBbox,
-            type: 'country',
-          });
-        }
-      });
-    }
-    // Sort: exact matches first, then by name length (shorter = more specific)
-    matchedCountries.sort((a, b) => {
-      const aExact = a.name.toLowerCase() === lowerQuery;
-      const bExact = b.name.toLowerCase() === lowerQuery;
-      if (aExact && !bExact) return -1;
-      if (!aExact && bExact) return 1;
-      return a.name.length - b.name.length;
-    });
-    setCountryResults(matchedCountries.slice(0, 5));
-
-    // Then search in local world cities dataset
-    const localResults: GeocodingResult[] = [];
-    if (worldCities) {
-      worldCities.features.forEach(feature => {
-        const name = feature.properties?.name || feature.properties?.CITY_NAME || '';
-        const country = feature.properties?.country || feature.properties?.CNTRY_NAME || '';
-
-        if (name.toLowerCase().includes(lowerQuery)) {
-          const coords = (feature.geometry as GeoJSON.Point).coordinates as number[];
-          const normalizedCoords = normalizeCoordinates(coords);
-          if (!normalizedCoords) {
-            return;
-          }
-          localResults.push({
-            id: `local-${name}-${normalizedCoords.lng}-${normalizedCoords.lat}`,
-            name,
-            displayName: `${name}, ${country}`,
-            lat: normalizedCoords.lat,
-            lng: normalizedCoords.lng,
-            country,
-            type: 'city',
-          });
-        }
-      });
-    }
-
-    // Also search Nominatim for more results
     try {
-      const nominatimResults = await searchPlaces(query, 5);
-      // Combine results, prioritizing local cities and deduping
-      const combined = [...localResults, ...nominatimResults];
-      const deduped = combined.filter((result, index, all) => {
-        const key = `${result.name.toLowerCase()}|${result.country?.toLowerCase() || ''}|${result.type}`;
-        return all.findIndex(r =>
-          `${r.name.toLowerCase()}|${r.country?.toLowerCase() || ''}|${r.type}` === key
-        ) === index;
+      const nominatimResults = await searchPlaces(query, 10);
+      const filtered = nominatimResults.filter(result => {
+        if (result.type === 'city') return false;
+        if (result.type === 'other' && result.country) {
+          return result.name.toLowerCase() !== result.country.toLowerCase();
+        }
+        return true;
       });
-      setSearchResults(deduped.slice(0, 10));
+      setSearchResults(filtered.slice(0, 10));
     } catch (error) {
       console.error('Search error:', error);
-      // Keep local results if Nominatim fails
-      setSearchResults(localResults.slice(0, 10));
+      setSearchResults([]);
     }
 
     setIsSearching(false);
-  }, [countriesGeoJSON, worldCities]);
+  }, []);
 
   // Debounced search
   const debouncedSearch = useMemo(
@@ -171,20 +71,12 @@ export function LeftPanel({
     debouncedSearch(query);
   };
 
-  const handleCountryResultClick = (result: CountrySearchResult) => {
-    onCountrySelect(result.isoA3, result.bbox);
-    setSearchQuery('');
-    setCountryResults([]);
-    setSearchResults([]);
-  };
-
   const handleResultClick = (result: GeocodingResult) => {
     onSearchResultPreview(result);
   };
 
   const handleClearSearch = () => {
     setSearchQuery('');
-    setCountryResults([]);
     setSearchResults([]);
     onSearchReset();
   };
@@ -218,7 +110,7 @@ export function LeftPanel({
         <div className="search-field">
           <input
             type="text"
-            placeholder="Search countries, cities, or places..."
+            placeholder="Search places..."
             value={searchQuery}
             onChange={handleSearchChange}
             className="search-input"
@@ -231,25 +123,16 @@ export function LeftPanel({
         </div>
         {isSearching && <div className="search-loading">Searching...</div>}
 
-        {(countryResults.length > 0 || searchResults.length > 0) && (
+        {searchResults.length > 0 && (
           <ul className="search-results">
-            {/* Country results first */}
-            {countryResults.map(result => (
-              <li key={result.id} className="search-result-item">
-                <button onClick={() => handleCountryResultClick(result)} className="result-btn">
-                  <span className="result-name">{result.name}</span>
-                  <span className="result-detail">Country</span>
-                  <span className="result-type type-country">country</span>
-                </button>
-              </li>
-            ))}
-            {/* City/place results */}
             {searchResults.map(result => (
               <li key={result.id} className="search-result-item">
                 <button onClick={() => handleResultClick(result)} className="result-btn">
                   <span className="result-name">{result.name}</span>
                   <span className="result-detail">{result.country || result.displayName}</span>
-                  <span className={`result-type type-${result.type}`}>{result.type}</span>
+                  <span className={`result-type type-${result.type === 'poi' ? 'poi' : 'place'}`}>
+                    {result.type === 'poi' ? 'poi' : 'place'}
+                  </span>
                 </button>
               </li>
             ))}
@@ -389,13 +272,45 @@ export function LeftPanel({
           </div>
 
           <div className="legend-group">
-            <span className="legend-title">Fill = Status</span>
+            <span className="legend-title">Countries</span>
             <div className="legend-item">
               <span className="legend-swatch solid"></span>
-              <span>Have visited</span>
+              <span>Visited (fill)</span>
             </div>
             <div className="legend-item">
               <span className="legend-swatch hatched"></span>
+              <span>Want to visit (hatched)</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-swatch neutral"></span>
+              <span>Unmarked</span>
+            </div>
+          </div>
+
+          <div className="legend-group">
+            <span className="legend-title">Cities</span>
+            <div className="legend-item">
+              <span className="legend-swatch city-solid"></span>
+              <span>Visited</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-swatch city-hollow"></span>
+              <span>Want to visit</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-swatch city-neutral"></span>
+              <span>Unmarked</span>
+            </div>
+          </div>
+
+          <div className="legend-group">
+            <span className="legend-title">Points of interest</span>
+            <div className="legend-item">
+              <span className="legend-swatch poi-solid"></span>
+              <span>Visited</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-swatch poi-hatched"></span>
               <span>Want to visit</span>
             </div>
           </div>
