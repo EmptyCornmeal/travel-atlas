@@ -28,9 +28,8 @@ import { Auth } from './ui/Auth';
 import { POIForm } from './ui/POIForm';
 import { ToastContainer, useToasts } from './ui/Toast';
 import './App.css';
-import { buildCountryNameIndex, findCountryIsoA3 } from './utils/geo';
+import { buildCountryIndex, findCountryIsoA3 } from './utils/geo';
 import { USER_COLORS } from './types';
-import { bbox as getBbox } from '@turf/turf';
 
 // Sync interval (15 seconds)
 const SYNC_INTERVAL = 15000;
@@ -190,19 +189,18 @@ function App() {
   })();
 
   const activeUser = actingUser ?? user;
-  const countryNameByIso = useMemo(() => buildCountryNameIndex(countriesGeoJSON), [countriesGeoJSON]);
+  const countryIndex = useMemo(() => buildCountryIndex(countriesGeoJSON), [countriesGeoJSON]);
 
   const selectedCountry = useMemo(() => {
     if (selection.type !== 'country' || !selection.id || !countriesGeoJSON) return null;
-    const feature = countriesGeoJSON.features.find(f => f.properties?.iso_a3 === selection.id);
-    if (!feature) return null;
-    const bounds = getBbox(feature) as [number, number, number, number];
+    const entry = countryIndex[selection.id];
+    if (!entry) return null;
     return {
       isoA3: selection.id,
-      name: countryNameByIso[selection.id] || feature.properties?.name || selection.id,
-      bounds,
+      name: entry.name || selection.id,
+      bounds: entry.bounds,
     };
-  }, [selection, countriesGeoJSON, countryNameByIso]);
+  }, [selection, countryIndex]);
 
   const cityPromptSkippedForSelection = useMemo(() => {
     if (!activeUser || selection.type !== 'country' || !selection.id) return false;

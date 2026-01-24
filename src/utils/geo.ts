@@ -28,9 +28,22 @@ export function findCountryIsoA3(
 export function buildCountryNameIndex(
   countries: GeoJSON.FeatureCollection | null
 ): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(buildCountryIndex(countries)).map(([iso, entry]) => [iso, entry.name])
+  );
+}
+
+export type CountryIndexEntry = {
+  name: string;
+  bounds: [number, number, number, number];
+};
+
+export function buildCountryIndex(
+  countries: GeoJSON.FeatureCollection | null
+): Record<string, CountryIndexEntry> {
   if (!countries) return {};
 
-  const byIso: Record<string, { name: string; area: number }> = {};
+  const byIso: Record<string, { name: string; area: number; bounds: [number, number, number, number] }> = {};
 
   for (const feature of countries.features) {
     const props = feature.properties as Record<string, unknown> | undefined;
@@ -45,11 +58,35 @@ export function buildCountryNameIndex(
       featureArea = 0;
     }
 
+    let featureBounds: [number, number, number, number];
+    try {
+      featureBounds = bbox(feature as any) as [number, number, number, number];
+    } catch {
+      continue;
+    }
+
     const existing = byIso[iso];
-    if (!existing || featureArea > existing.area) {
-      byIso[iso] = { name, area: featureArea };
+    if (!existing) {
+      byIso[iso] = { name, area: featureArea, bounds: featureBounds };
+      continue;
+    }
+
+    const [minX, minY, maxX, maxY] = existing.bounds;
+    const [fMinX, fMinY, fMaxX, fMaxY] = featureBounds;
+    existing.bounds = [
+      Math.min(minX, fMinX),
+      Math.min(minY, fMinY),
+      Math.max(maxX, fMaxX),
+      Math.max(maxY, fMaxY),
+    ];
+
+    if (featureArea > existing.area) {
+      existing.name = name;
+      existing.area = featureArea;
     }
   }
 
-  return Object.fromEntries(Object.entries(byIso).map(([iso, entry]) => [iso, entry.name]));
+  return Object.fromEntries(
+    Object.entries(byIso).map(([iso, entry]) => [iso, { name: entry.name, bounds: entry.bounds }])
+  );
 }
