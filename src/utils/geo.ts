@@ -1,5 +1,6 @@
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
 import bbox from '@turf/bbox';
+import { area as turfArea } from '@turf/turf';
 import { point as turfPoint } from '@turf/helpers';
 
 export function findCountryIsoA3(
@@ -22,4 +23,33 @@ export function findCountryIsoA3(
     }
   }
   return null;
+}
+
+export function buildCountryNameIndex(
+  countries: GeoJSON.FeatureCollection | null
+): Record<string, string> {
+  if (!countries) return {};
+
+  const byIso: Record<string, { name: string; area: number }> = {};
+
+  for (const feature of countries.features) {
+    const props = feature.properties as Record<string, unknown> | undefined;
+    const iso = props?.iso_a3 ? String(props.iso_a3) : null;
+    if (!iso) continue;
+
+    const name = String(props?.name || props?.COUNTRY || iso);
+    let featureArea = 0;
+    try {
+      featureArea = turfArea(feature as any);
+    } catch {
+      featureArea = 0;
+    }
+
+    const existing = byIso[iso];
+    if (!existing || featureArea > existing.area) {
+      byIso[iso] = { name, area: featureArea };
+    }
+  }
+
+  return Object.fromEntries(Object.entries(byIso).map(([iso, entry]) => [iso, entry.name]));
 }
