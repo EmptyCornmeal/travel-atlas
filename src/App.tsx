@@ -774,13 +774,72 @@ function App() {
       country_iso_a3: city.countryIsoA3,
     });
 
-    if (duplicate) {
+    const isAdminActingAsOther = isAdmin && adminMode && actingAs !== 'me';
+
+    if (!isAdminActingAsOther && duplicate) {
       toast.error(`Looks like ${duplicate.name} is already saved for this country.`);
       return;
     }
 
     setIsLoading(true);
     try {
+      if (isAdminActingAsOther) {
+        const targets = getTargetUserIds();
+        if (!targets.length) return;
+
+        if (duplicate) {
+          for (const targetId of targets) {
+            const { error } = await supabase.rpc('admin_set_city_flag', {
+              p_city_id: duplicate.id,
+              p_flag: city.status,
+              p_value: true,
+              p_target_user_id: targetId,
+            });
+            if (error) throw error;
+          }
+
+          await fetchAllData();
+          setSelection({ type: 'city', id: duplicate.id });
+          setFocusLocation({ lat: duplicate.lat, lng: duplicate.lng, zoom: 6 });
+          setTimeout(() => setFocusLocation(null), 800);
+          toast.success('City updated');
+          setCityPromptTarget(null);
+          return;
+        }
+
+        const { data, error } = await supabase.rpc('admin_create_city', {
+          p_name: city.name,
+          p_country_iso_a3: city.countryIsoA3,
+          p_lat: city.lat,
+          p_lng: city.lng,
+          p_target_user: targets[0],
+        });
+        if (error) throw error;
+
+        const newCity = Array.isArray(data) ? data[0] : data;
+        if (!newCity) {
+          throw new Error('Admin city creation returned no data.');
+        }
+
+        for (const targetId of targets) {
+          const { error: flagError } = await supabase.rpc('admin_set_city_flag', {
+            p_city_id: newCity.id,
+            p_flag: city.status,
+            p_value: true,
+            p_target_user_id: targetId,
+          });
+          if (flagError) throw flagError;
+        }
+
+        await fetchAllData();
+        setSelection({ type: 'city', id: newCity.id });
+        setFocusLocation({ lat: newCity.lat, lng: newCity.lng, zoom: 6 });
+        setTimeout(() => setFocusLocation(null), 800);
+        toast.success('City added');
+        setCityPromptTarget(null);
+        return;
+      }
+
       const newCity = await createCity({
         name: city.name,
         country_iso_a3: city.countryIsoA3,
@@ -801,9 +860,19 @@ function App() {
     } catch (error) {
       console.error('Error creating city:', error);
       toast.error('Failed to add city');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
-  }, [user, toast]);
+  }, [
+    user,
+    cities,
+    isAdmin,
+    adminMode,
+    actingAs,
+    getTargetUserIds,
+    fetchAllData,
+    toast,
+  ]);
 
   const handleSearchResultPreview = useCallback((result: GeocodingResult) => {
     setSearchSelection(result);
