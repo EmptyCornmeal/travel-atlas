@@ -11,6 +11,7 @@ import {
   fetchCategories,
   setCountryFlag,
   createCity,
+  updateCity,
   setCityFlag,
   deleteCity,
   createPOI,
@@ -29,6 +30,7 @@ import { ToastContainer, useToasts } from './ui/Toast';
 import './App.css';
 import { findCountryIsoA3 } from './utils/geo';
 import { USER_COLORS } from './types';
+import { bbox as getBbox } from '@turf/turf';
 
 // Sync interval (15 seconds)
 const SYNC_INTERVAL = 15000;
@@ -46,6 +48,50 @@ const VIKTORIA_USER_ID = '329d827a-7e6d-4b43-8967-5d85c5776ff1';
 // localStorage keys (persist on your device)
 const LS_ADMIN_MODE = 'ta_adminMode';
 const LS_ACTING_AS = 'ta_actingAs';
+const LS_CITY_PROMPT_SKIP = 'ta_cityPromptSkip';
+
+const CITY_DEDUPE_DISTANCE_KM = 5;
+
+function isValidCoordinate(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+function toRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(b.lat - a.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+
+  const sinLat = Math.sin(dLat / 2) ** 2;
+  const sinLng = Math.sin(dLng / 2) ** 2;
+  const cosLat = Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(sinLat + cosLat * sinLng), Math.sqrt(1 - sinLat - cosLat * sinLng));
+  return earthRadiusKm * c;
+}
+
+function findDuplicateCity(
+  cities: City[],
+  candidate: { id: string | null; name: string; lat: number; lng: number; country_iso_a3: string }
+): City | null {
+  const normalizedName = candidate.name.trim().toLowerCase();
+  return cities.find(city => {
+    if (city.country_iso_a3 !== candidate.country_iso_a3) return false;
+    if (candidate.id && city.id === candidate.id) return false;
+    const cityName = city.name.trim().toLowerCase();
+    if (cityName === normalizedName) return true;
+    if (!isValidCoordinate(city.lat, city.lng) || !isValidCoordinate(candidate.lat, candidate.lng)) return false;
+    return distanceKm({ lat: city.lat, lng: city.lng }, { lat: candidate.lat, lng: candidate.lng }) <= CITY_DEDUPE_DISTANCE_KM;
+  }) || null;
+}
+
+function cityPromptStorageKey(userId: string, isoA3: string): string {
+  return `${LS_CITY_PROMPT_SKIP}:${userId}:${isoA3}`;
+}
 
 function App() {
   // Auth state
@@ -79,6 +125,11 @@ function App() {
   const [showPOIForm, setShowPOIForm] = useState<{ lat: number; lng: number } | null>(null);
   const [focusLocation, setFocusLocation] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
+  const [mapClickMode, setMapClickMode] = useState<'poi' | 'city' | null>(null);
+  const [cityPromptTarget, setCityPromptTarget] = useState<string | null>(null);
+  const [cityPromptSkips, setCityPromptSkips] = useState<Record<string, boolean>>({});
+  const [pendingCityLocation, setPendingCityLocation] = useState<{ cityId: string; lat: number; lng: number } | null>(null);
+  const [pendingCityPickId, setPendingCityPickId] = useState<string | null>(null);
 
   // Admin UI state (persist on this device)
   const [adminMode, setAdminMode] = useState<boolean>(() => localStorage.getItem(LS_ADMIN_MODE) === '1');
@@ -137,6 +188,26 @@ function App() {
 
     return resolvedOtherUser;
   })();
+
+  const activeUser = actingUser ?? user;
+
+  const selectedCountry = useMemo(() => {
+    if (selection.type !== 'country' || !selection.id || !countriesGeoJSON) return null;
+    const feature = countriesGeoJSON.features.find(f => f.properties?.iso_a3 === selection.id);
+    if (!feature) return null;
+    const bounds = getBbox(feature) as [number, number, number, number];
+    return {
+      isoA3: selection.id,
+      name: feature.properties?.name || selection.id,
+      bounds,
+    };
+  }, [selection, countriesGeoJSON]);
+
+  const cityPromptSkippedForSelection = useMemo(() => {
+    if (!activeUser || selection.type !== 'country' || !selection.id) return false;
+    const storageKey = cityPromptStorageKey(activeUser.id, selection.id);
+    return cityPromptSkips[storageKey] ?? localStorage.getItem(storageKey) === 'true';
+  }, [activeUser, selection, cityPromptSkips]);
 
   // Persist admin state locally (doesn't depend on her logging in)
   useEffect(() => {
@@ -380,9 +451,19 @@ function App() {
   }, []);
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
-    setShowPOIForm({ lat, lng });
-    setSearchSelection(null);
-  }, []);
+    if (mapClickMode === 'city' && pendingCityPickId) {
+      setPendingCityLocation({ cityId: pendingCityPickId, lat, lng });
+      setMapClickMode(null);
+      setPendingCityPickId(null);
+      return;
+    }
+
+    if (mapClickMode === 'poi') {
+      setShowPOIForm({ lat, lng });
+      setSearchSelection(null);
+      setMapClickMode(null);
+    }
+  }, [mapClickMode, pendingCityPickId]);
 
   const handleCloseSelection = useCallback(() => {
     setSelection({ type: null, id: null });
@@ -400,6 +481,14 @@ function App() {
         await adminAwareSetCountryFlag(isoA3, 'been', true);
       } else {
         await adminAwareSetCountryFlag(isoA3, flag, value);
+      }
+
+      if (flag === 'been' && value && activeUser) {
+        const storageKey = cityPromptStorageKey(activeUser.id, isoA3);
+        const isSkipped = cityPromptSkips[storageKey] ?? localStorage.getItem(storageKey) === 'true';
+        if (!isSkipped) {
+          setCityPromptTarget(isoA3);
+        }
       }
 
       // If we acted as someone other than "me", re-sync from DB (avoid wrong optimistic write)
@@ -437,12 +526,13 @@ function App() {
       });
 
       toast.success('Saved');
+
     } catch (error) {
       console.error('Error toggling country flag:', error);
       toast.error('Failed to save');
     }
     setIsLoading(false);
-  }, [user, isAdmin, adminMode, actingAs, adminAwareSetCountryFlag, fetchAllData, toast]);
+  }, [user, isAdmin, adminMode, actingAs, adminAwareSetCountryFlag, fetchAllData, toast, activeUser, cityPromptSkips]);
 
   // City flag toggle (admin-aware)
   const handleCityFlagToggle = useCallback(async (cityId: string, flag: 'want' | 'been', value: boolean) => {
@@ -510,6 +600,46 @@ function App() {
       toast.error('Failed to delete city');
     }
     setIsLoading(false);
+  }, [user, cities, toast]);
+
+  const handleCityUpdate = useCallback(async (cityId: string, updates: { name: string; lat: number; lng: number }) => {
+    if (!user) return;
+
+    const city = cities.find(c => c.id === cityId);
+    if (!city || city.created_by !== user.id) {
+      toast.error('You can only edit cities you created');
+      return;
+    }
+
+    if (!isValidCoordinate(updates.lat, updates.lng)) {
+      toast.error('That location looks invalid. Try another spot.');
+      return;
+    }
+
+    const duplicate = findDuplicateCity(cities, {
+      id: cityId,
+      name: updates.name,
+      lat: updates.lat,
+      lng: updates.lng,
+      country_iso_a3: city.country_iso_a3,
+    });
+
+    if (duplicate) {
+      toast.error(`Looks like ${duplicate.name} already exists in this country.`);
+      return;
+    }
+
+    const previousCity = city;
+    setCities(prev => prev.map(c => (c.id === cityId ? { ...c, ...updates } : c)));
+
+    try {
+      await updateCity(cityId, updates);
+      toast.success('City updated');
+    } catch (error) {
+      console.error('Error updating city:', error);
+      setCities(prev => prev.map(c => (c.id === cityId ? previousCity : c)));
+      toast.error('Failed to update city');
+    }
   }, [user, cities, toast]);
 
   // POI update
@@ -619,6 +749,7 @@ function App() {
   const handlePOISearchAdd = useCallback((result: GeocodingResult) => {
     setSearchSelection(null);
     setShowPOIForm({ lat: result.lat, lng: result.lng });
+    setMapClickMode(null);
   }, []);
 
   const handleCountryCityAdd = useCallback(async (city: {
@@ -629,6 +760,24 @@ function App() {
     status: 'want' | 'been';
   }) => {
     if (!user) return;
+
+    if (!isValidCoordinate(city.lat, city.lng)) {
+      toast.error('That location looks invalid. Try another city.');
+      return;
+    }
+
+    const duplicate = findDuplicateCity(cities, {
+      id: null,
+      name: city.name,
+      lat: city.lat,
+      lng: city.lng,
+      country_iso_a3: city.countryIsoA3,
+    });
+
+    if (duplicate) {
+      toast.error(`Looks like ${duplicate.name} is already saved for this country.`);
+      return;
+    }
 
     setIsLoading(true);
     try {
@@ -647,6 +796,7 @@ function App() {
         setFocusLocation({ lat: newCity.lat, lng: newCity.lng, zoom: 6 });
         setTimeout(() => setFocusLocation(null), 800);
         toast.success('City added');
+        setCityPromptTarget(null);
       }
     } catch (error) {
       console.error('Error creating city:', error);
@@ -659,10 +809,47 @@ function App() {
     setSearchSelection(result);
     setSelection({ type: null, id: null });
     setIsRightPanelCollapsed(false);
+    setMapClickMode(null);
   }, []);
 
   const handleSearchReset = useCallback(() => {
     setSearchSelection(null);
+    setMapClickMode(null);
+  }, []);
+
+  const handleStartDropPin = useCallback(() => {
+    setMapClickMode('poi');
+    setSearchSelection(null);
+  }, []);
+
+  const handleStartCityReposition = useCallback((cityId: string) => {
+    setMapClickMode('city');
+    setPendingCityPickId(cityId);
+  }, []);
+
+  const handleCancelCityReposition = useCallback(() => {
+    setMapClickMode(null);
+    setPendingCityPickId(null);
+  }, []);
+
+  const handleCityRepositionComplete = useCallback(() => {
+    setPendingCityLocation(null);
+  }, []);
+
+  const handleCityPromptSkip = useCallback((isoA3: string) => {
+    if (!activeUser) return;
+    const storageKey = cityPromptStorageKey(activeUser.id, isoA3);
+    setCityPromptSkips(prev => ({ ...prev, [storageKey]: true }));
+    localStorage.setItem(storageKey, 'true');
+    setCityPromptTarget(null);
+  }, [activeUser]);
+
+  const handleCityPromptShow = useCallback((isoA3: string) => {
+    setCityPromptTarget(isoA3);
+  }, []);
+
+  const handleCityPromptDismiss = useCallback(() => {
+    setCityPromptTarget(null);
   }, []);
 
   const handleResetView = useCallback(() => {
@@ -866,10 +1053,13 @@ function App() {
         filters={filters}
         layers={layers}
         categories={categories}
+        selectedCountry={selectedCountry}
+        isDropPinMode={mapClickMode === 'poi'}
         onFiltersChange={setFilters}
         onLayersChange={setLayers}
         onSearchResultPreview={handleSearchResultPreview}
         onSearchReset={handleSearchReset}
+        onStartDropPin={handleStartDropPin}
       />
 
       <RightPanel
@@ -892,11 +1082,22 @@ function App() {
         onCountryCityAdd={handleCountryCityAdd}
         onCitySelect={handleCityClick}
         onCityFlagToggle={handleCityFlagToggle}
+        onCityUpdate={handleCityUpdate}
+        onCityRepositionStart={handleStartCityReposition}
+        onCityRepositionCancel={handleCancelCityReposition}
         onCityDelete={handleCityDelete}
+        onPOISelect={handlePOIClick}
         onPOIUpdate={handlePOIUpdate}
         onPOIEndorse={handlePOIEndorse}
         onPOIDelete={handlePOIDelete}
         onCreateCategory={handleCreateCategory}
+        pendingCityLocation={pendingCityLocation}
+        onCityRepositionComplete={handleCityRepositionComplete}
+        cityPromptTarget={cityPromptTarget}
+        cityPromptSkipped={cityPromptSkippedForSelection}
+        onCityPromptSkip={handleCityPromptSkip}
+        onCityPromptShow={handleCityPromptShow}
+        onCityPromptDismiss={handleCityPromptDismiss}
       />
 
       {showPOIForm && (

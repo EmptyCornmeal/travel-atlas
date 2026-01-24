@@ -56,16 +56,31 @@ async function throttledFetch(url: string): Promise<Response> {
 }
 
 // Forward geocoding - search for places by name
-export async function searchPlaces(query: string, limit = 10): Promise<GeocodingResult[]> {
-  if (!query.trim()) return [];
+type SearchOptions = {
+  limit?: number;
+  bounds?: [number, number, number, number];
+  countryName?: string;
+};
+
+export async function searchPlaces(query: string, options: SearchOptions = {}): Promise<GeocodingResult[]> {
+  const normalizedQuery = normalizeQuery(query);
+  if (!normalizedQuery) return [];
+
+  const { limit = 10, bounds, countryName } = options;
+  const effectiveQuery = countryName ? `${normalizedQuery}, ${countryName}` : normalizedQuery;
 
   const params = new URLSearchParams({
-    q: query,
+    q: effectiveQuery,
     format: 'json',
     addressdetails: '1',
     limit: String(limit),
     'accept-language': 'en',
   });
+
+  if (bounds) {
+    params.set('viewbox', `${bounds[0]},${bounds[3]},${bounds[2]},${bounds[1]}`);
+    params.set('bounded', '1');
+  }
 
   try {
     const response = await throttledFetch(`${NOMINATIM_BASE_URL}/search?${params}`);
@@ -170,6 +185,15 @@ function inferResultType(result: NominatimResult): 'city' | 'poi' | 'other' {
   }
 
   return 'other';
+}
+
+function normalizeQuery(query: string): string {
+  return query
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(,\s*){2,}/g, ', ')
+    .replace(/,\s*$/, '');
 }
 
 // Debounce helper for search input

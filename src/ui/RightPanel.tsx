@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { CountryState, City, POI, Category, User, Selection, POILink } from '../types';
 import type { GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
@@ -30,7 +30,18 @@ interface RightPanelProps {
   }) => void;
   onCitySelect: (cityId: string) => void;
   onCityFlagToggle: (cityId: string, flag: 'want' | 'been', value: boolean) => void;
+  onCityUpdate: (cityId: string, updates: { name: string; lat: number; lng: number }) => void;
+  onCityRepositionStart: (cityId: string) => void;
+  onCityRepositionCancel: () => void;
   onCityDelete: (cityId: string) => void;
+  pendingCityLocation: { cityId: string; lat: number; lng: number } | null;
+  onCityRepositionComplete: () => void;
+  cityPromptTarget: string | null;
+  cityPromptSkipped: boolean;
+  onCityPromptSkip: (isoA3: string) => void;
+  onCityPromptShow: (isoA3: string) => void;
+  onCityPromptDismiss: () => void;
+  onPOISelect: (poiId: string) => void;
   onPOIUpdate: (poiId: string, updates: {
     label: string;
     status: 'want' | 'been';
@@ -64,7 +75,18 @@ export function RightPanel({
   onCountryCityAdd,
   onCitySelect,
   onCityFlagToggle,
+  onCityUpdate,
+  onCityRepositionStart,
+  onCityRepositionCancel,
   onCityDelete,
+  pendingCityLocation,
+  onCityRepositionComplete,
+  cityPromptTarget,
+  cityPromptSkipped,
+  onCityPromptSkip,
+  onCityPromptShow,
+  onCityPromptDismiss,
+  onPOISelect,
   onPOIUpdate,
   onPOIEndorse,
   onPOIDelete,
@@ -125,6 +147,13 @@ export function RightPanel({
               onFlagToggle={onCountryFlagToggle}
               onCityAdd={onCountryCityAdd}
               onCitySelect={onCitySelect}
+              pois={pois}
+              onPOISelect={onPOISelect}
+              showCityPrompt={cityPromptTarget === selection.id}
+              isCityPromptSkipped={cityPromptSkipped}
+              onCityPromptSkip={onCityPromptSkip}
+              onCityPromptShow={onCityPromptShow}
+              onCityPromptDismiss={onCityPromptDismiss}
             />
           )}
 
@@ -135,7 +164,12 @@ export function RightPanel({
               otherUser={otherUser}
               cities={cities}
               onFlagToggle={onCityFlagToggle}
+              onUpdate={onCityUpdate}
+              onStartReposition={onCityRepositionStart}
+              onCancelReposition={onCityRepositionCancel}
               onDelete={onCityDelete}
+              pendingLocation={pendingCityLocation}
+              onPendingLocationHandled={onCityRepositionComplete}
             />
           )}
 
@@ -156,6 +190,72 @@ export function RightPanel({
       )}
     </div>
   );
+}
+
+function CountryPOIManager({
+  countryName,
+  pois,
+  onPOISelect,
+}: {
+  countryName: string;
+  pois: POI[];
+  onPOISelect: (poiId: string) => void;
+}) {
+  const sortedPOIs = useMemo(
+    () => [...pois].sort((a, b) => a.label.localeCompare(b.label)),
+    [pois]
+  );
+
+  return (
+    <div className="poi-manager">
+      <div className="section-header">
+        <h3>POIs ({pois.length})</h3>
+      </div>
+
+      {sortedPOIs.length > 0 ? (
+        <ul className="poi-list">
+          {sortedPOIs.map(poi => (
+            <li key={poi.id}>
+              <button className="poi-row" onClick={() => onPOISelect(poi.id)}>
+                <span className="poi-name">{poi.label}</span>
+                <span className={`poi-status ${poi.status}`}>
+                  {poi.status === 'been' ? 'Visited' : 'Want to visit'}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="empty-state">
+          No POIs yet. Search above or drop a pin on the map to add one in {countryName}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function normalizeCityCoordinates(coords: number[]): [number, number] {
+  if (coords.length < 2) return [Number.NaN, Number.NaN];
+  const [x, y] = coords;
+  if (Math.abs(x) > 180 || Math.abs(y) > 90) {
+    const lon = (x / 20037508.34) * 180;
+    const lat = (y / 20037508.34) * 180;
+    const latRad = (2 * Math.atan(Math.exp((lat * Math.PI) / 180)) - Math.PI / 2);
+    return [lon, (latRad * 180) / Math.PI];
+  }
+  return [x, y];
+}
+
+function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const earthRadiusKm = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const sinLat = Math.sin(dLat / 2) ** 2;
+  const sinLng = Math.sin(dLng / 2) ** 2;
+  const cosLat = Math.cos(lat1) * Math.cos(lat2);
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(sinLat + cosLat * sinLng), Math.sqrt(1 - sinLat - cosLat * sinLng));
 }
 
 function getSelectionSummary({
@@ -236,10 +336,17 @@ function CountryDetails({
   countriesState,
   countriesGeoJSON,
   cities,
+  pois,
   worldCities,
   onFlagToggle,
   onCityAdd,
   onCitySelect,
+  onPOISelect,
+  showCityPrompt,
+  isCityPromptSkipped,
+  onCityPromptSkip,
+  onCityPromptShow,
+  onCityPromptDismiss,
 }: {
   isoA3: string;
   user: User;
@@ -247,6 +354,7 @@ function CountryDetails({
   countriesState: CountryState[];
   countriesGeoJSON: GeoJSON.FeatureCollection | null;
   cities: City[];
+  pois: POI[];
   worldCities: GeoJSON.FeatureCollection | null;
   onFlagToggle: (isoA3: string, flag: 'want' | 'been', value: boolean) => void;
   onCityAdd: (city: {
@@ -257,6 +365,12 @@ function CountryDetails({
     status: 'want' | 'been';
   }) => void;
   onCitySelect: (cityId: string) => void;
+  onPOISelect: (poiId: string) => void;
+  showCityPrompt: boolean;
+  isCityPromptSkipped: boolean;
+  onCityPromptSkip: (isoA3: string) => void;
+  onCityPromptShow: (isoA3: string) => void;
+  onCityPromptDismiss: () => void;
 }) {
   const state = countriesState.find(s => s.iso_a3 === isoA3);
   const countryFeature = countriesGeoJSON?.features.find(
@@ -268,6 +382,15 @@ function CountryDetails({
   const userBeen = state?.been_by?.[user.id] === true;
   const otherWant = otherUser && state?.want_by?.[otherUser.id] === true;
   const otherBeen = otherUser && state?.been_by?.[otherUser.id] === true;
+  const [focusSearchToken, setFocusSearchToken] = useState(0);
+  const citiesInCountry = useMemo(
+    () => cities.filter(city => city.country_iso_a3 === isoA3),
+    [cities, isoA3]
+  );
+  const poisInCountry = useMemo(
+    () => pois.filter(poi => poi.country_iso_a3 === isoA3),
+    [pois, isoA3]
+  );
 
   return (
     <div className="details-content">
@@ -293,6 +416,29 @@ function CountryDetails({
           </button>
         </div>
       </div>
+
+      {showCityPrompt && (
+        <div className="callout">
+          <div>
+            <h4>Add cities you visited in {countryName}</h4>
+            <p>Keep your trip history detailed by adding a few key cities.</p>
+          </div>
+          <div className="callout-actions">
+            <button
+              className="primary-action"
+              onClick={() => {
+                setFocusSearchToken(prev => prev + 1);
+                onCityPromptDismiss();
+              }}
+            >
+              Add cities
+            </button>
+            <button className="secondary-action" onClick={() => onCityPromptSkip(isoA3)}>
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
 
       {otherUser && (
         <div className="other-status">
@@ -324,6 +470,17 @@ function CountryDetails({
         onCityAdd={onCityAdd}
         onCitySelect={onCitySelect}
         defaultStatus={userBeen ? 'been' : 'want'}
+        focusSearchToken={focusSearchToken}
+        onRequestFocus={() => setFocusSearchToken(prev => prev + 1)}
+        isPromptSkipped={isCityPromptSkipped}
+        onShowPrompt={() => onCityPromptShow(isoA3)}
+        cityCount={citiesInCountry.length}
+      />
+
+      <CountryPOIManager
+        countryName={countryName}
+        pois={poisInCountry}
+        onPOISelect={onPOISelect}
       />
     </div>
   );
@@ -338,6 +495,11 @@ function CountryCityManager({
   onCityAdd,
   onCitySelect,
   defaultStatus,
+  focusSearchToken,
+  onRequestFocus,
+  isPromptSkipped,
+  onShowPrompt,
+  cityCount,
 }: {
   isoA3: string;
   countryName: string;
@@ -353,13 +515,23 @@ function CountryCityManager({
   }) => void;
   onCitySelect: (cityId: string) => void;
   defaultStatus: 'want' | 'been';
+  focusSearchToken: number;
+  onRequestFocus: () => void;
+  isPromptSkipped: boolean;
+  onShowPrompt: () => void;
+  cityCount: number;
 }) {
   const [cityQuery, setCityQuery] = useState('');
   const [cityStatus, setCityStatus] = useState<'want' | 'been'>(defaultStatus);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setCityStatus(defaultStatus);
   }, [defaultStatus]);
+
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, [focusSearchToken]);
 
   const citiesInCountry = useMemo(() => (
     cities
@@ -388,14 +560,15 @@ function CountryCityManager({
       if (!(countryLower.includes(country) || country.includes(countryLower))) continue;
 
       const coords = (feature.geometry as GeoJSON.Point).coordinates as number[];
-      if (coords.length < 2 || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) continue;
+      const [lng, lat] = normalizeCityCoordinates(coords);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
 
       matches.push({
         id: `local-${name}-${coords[0]}-${coords[1]}`,
         name,
         displayName: `${name}, ${featureCountry}`,
-        lat: coords[1],
-        lng: coords[0],
+        lat,
+        lng,
         country: featureCountry,
         type: 'city',
       });
@@ -416,11 +589,28 @@ function CountryCityManager({
     });
   };
 
+  const isAlreadyAdded = (result: GeocodingResult) => {
+    return citiesInCountry.some(city => {
+      if (city.name.toLowerCase() === result.name.toLowerCase()) return true;
+      if (!Number.isFinite(city.lat) || !Number.isFinite(city.lng)) return false;
+      return distanceKm({ lat: city.lat, lng: city.lng }, { lat: result.lat, lng: result.lng }) <= 5;
+    });
+  };
+
   return (
     <div className="city-manager">
       <div className="section-header">
-        <h3>Cities in {countryName}</h3>
-        <span className="count-pill">{citiesInCountry.length}</span>
+        <h3>Cities ({cityCount})</h3>
+        <div className="section-actions">
+          <button className="link-action" onClick={onRequestFocus}>
+            Add cities
+          </button>
+          {isPromptSkipped && (
+            <button className="link-action subtle" onClick={onShowPrompt}>
+              Show reminder
+            </button>
+          )}
+        </div>
       </div>
 
       {citiesInCountry.length > 0 ? (
@@ -452,6 +642,7 @@ function CountryCityManager({
             value={cityQuery}
             onChange={event => setCityQuery(event.target.value)}
             placeholder={`Add a city in ${countryName}`}
+            ref={searchInputRef}
           />
           <select value={cityStatus} onChange={event => setCityStatus(event.target.value as 'want' | 'been')}>
             <option value="been">Visited</option>
@@ -463,9 +654,7 @@ function CountryCityManager({
           <ul className="city-search-results">
             {matchingCities.length > 0 ? (
               matchingCities.map(result => {
-                const alreadyAdded = citiesInCountry.some(
-                  city => city.name.toLowerCase() === result.name.toLowerCase()
-                );
+                const alreadyAdded = isAlreadyAdded(result);
                 return (
                   <li key={result.id}>
                     <button
@@ -499,23 +688,104 @@ function CityDetails({
   otherUser,
   cities,
   onFlagToggle,
+  onUpdate,
+  onStartReposition,
+  onCancelReposition,
   onDelete,
+  pendingLocation,
+  onPendingLocationHandled,
 }: {
   cityId: string;
   user: User;
   otherUser: User | null;
   cities: City[];
   onFlagToggle: (cityId: string, flag: 'want' | 'been', value: boolean) => void;
+  onUpdate: (cityId: string, updates: { name: string; lat: number; lng: number }) => void;
+  onStartReposition: (cityId: string) => void;
+  onCancelReposition: () => void;
   onDelete: (cityId: string) => void;
+  pendingLocation: { cityId: string; lat: number; lng: number } | null;
+  onPendingLocationHandled: () => void;
 }) {
   const city = cities.find(c => c.id === cityId);
   if (!city) return <div className="details-content">City not found</div>;
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: city.name,
+    lat: city.lat,
+    lng: city.lng,
+  });
+
+  useEffect(() => {
+    setIsEditing(false);
+  }, [cityId]);
+
+  useEffect(() => {
+    setEditForm({ name: city.name, lat: city.lat, lng: city.lng });
+  }, [city.name, city.lat, city.lng]);
+
+  useEffect(() => {
+    if (pendingLocation && pendingLocation.cityId === cityId) {
+      setEditForm(prev => ({ ...prev, lat: pendingLocation.lat, lng: pendingLocation.lng }));
+      onPendingLocationHandled();
+    }
+  }, [pendingLocation, cityId, onPendingLocationHandled]);
 
   const isCreator = city.created_by === user.id;
   const userWant = city.want_by?.[user.id] === true;
   const userBeen = city.been_by?.[user.id] === true;
   const otherWant = otherUser && city.want_by?.[otherUser.id] === true;
   const otherBeen = otherUser && city.been_by?.[otherUser.id] === true;
+
+  const formatCoord = (value: number) => (Number.isFinite(value) ? value.toFixed(5) : '—');
+
+  const handleSave = () => {
+    onUpdate(cityId, editForm);
+    setIsEditing(false);
+    onCancelReposition();
+  };
+
+  if (isEditing && isCreator) {
+    return (
+      <div className="details-content edit-mode">
+        <div className="details-header">
+          <h2>Edit City</h2>
+          <span className="details-type">City</span>
+        </div>
+
+        <div className="edit-form">
+          <div className="form-group">
+            <label>Name</label>
+            <input
+              type="text"
+              value={editForm.name}
+              onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Coordinates</label>
+            <div className="coord-row">
+              <input type="text" value={formatCoord(editForm.lat)} readOnly />
+              <input type="text" value={formatCoord(editForm.lng)} readOnly />
+              <button className="secondary-action" onClick={() => onStartReposition(cityId)}>
+                Re-pick on map
+              </button>
+            </div>
+            <p className="helper-note">Click the map to set a new location, then save.</p>
+          </div>
+
+          <div className="form-actions">
+            <button className="save-btn" onClick={handleSave}>Save</button>
+            <button className="cancel-btn" onClick={() => { setIsEditing(false); onCancelReposition(); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="details-content">
@@ -569,6 +839,9 @@ function CityDetails({
 
       {isCreator && (
         <div className="actions-section">
+          <button className="edit-btn" onClick={() => setIsEditing(true)}>
+            Edit City
+          </button>
           <details className="danger-zone">
             <summary>Danger zone</summary>
             <button className="delete-btn" onClick={() => onDelete(cityId)}>

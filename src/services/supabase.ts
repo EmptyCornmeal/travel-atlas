@@ -239,6 +239,21 @@ export async function createCity(
   return data;
 }
 
+export async function updateCity(
+  city_id: string,
+  updates: { name: string; lat: number; lng: number }
+): Promise<void> {
+  const { error } = await supabase
+    .from('cities')
+    .update({ name: updates.name, lat: updates.lat, lng: updates.lng })
+    .eq('id', city_id);
+
+  if (error) {
+    console.error('Error updating city:', error);
+    throw error;
+  }
+}
+
 export async function setCityFlag(
   city_id: string,
   flag: 'want' | 'been',

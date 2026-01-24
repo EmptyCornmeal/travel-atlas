@@ -94,6 +94,23 @@
   color: #6B7280;
 }
 
+.search-options {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toggle-label.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.search-helper {
+  font-size: 12px;
+  color: #9CA3AF;
+}
+
 .search-results {
   list-style: none;
   margin: 8px 0 0 0;
@@ -164,6 +181,33 @@
 .result-type.type-place {
   background: #F3F4F6;
   color: #6B7280;
+}
+
+.search-empty {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #F9FAFB;
+  border: 1px dashed #E5E7EB;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: #6B7280;
+}
+
+.search-empty .secondary-action {
+  align-self: flex-start;
+}
+
+.search-pin-mode {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #EEF2FF;
+  color: #3730A3;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 /* Sections */

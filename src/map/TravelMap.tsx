@@ -533,6 +533,7 @@ export function TravelMap({
   // Zoom to a specific location (e.g., newly added city)
   useEffect(() => {
     if (!map.current || !loaded.current || !focusLocation) return;
+    if (!isValidCoordinate(focusLocation.lat, focusLocation.lng)) return;
 
     map.current.easeTo({
       center: [focusLocation.lng, focusLocation.lat],
@@ -549,6 +550,8 @@ export function TravelMap({
       const base = import.meta.env.BASE_URL;
       const response = await fetch(`${base}data/countries.geojson`);
       const countriesGeoJSON: GeoJSON.FeatureCollection = await response.json();
+      const mapInstance = map.current;
+      if (!mapInstance) return;
 
       // Merge with state and apply styling - include ALL countries
       const sortedFeatures = [...countriesGeoJSON.features].sort((a, b) => area(b as any) - area(a as any));
@@ -574,7 +577,7 @@ export function TravelMap({
         })
         .filter(Boolean);
 
-      const source = map.current.getSource('countries') as GeoJSONSource;
+      const source = mapInstance.getSource('countries') as GeoJSONSource;
       if (source) {
         source.setData({
           type: 'FeatureCollection',
@@ -590,7 +593,9 @@ export function TravelMap({
   const updateCitiesData = useCallback(() => {
     if (!map.current) return;
 
-    const filteredCities = cities.filter(city => passesFilters(city, user, filters, 'city'));
+    const filteredCities = cities
+      .filter(city => passesFilters(city, user, filters, 'city'))
+      .filter(city => isValidCoordinate(city.lat, city.lng));
 
     const features: GeoJSON.Feature[] = filteredCities.map(city => {
       const styling = getCityStyling(city, user, otherUser, selection);
@@ -677,6 +682,10 @@ async function loadImage(
 
   const image = await mapInstance.loadImage(url);
   mapInstance.addImage(name, image.data);
+}
+
+function isValidCoordinate(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 // Determine who has marked an entity
