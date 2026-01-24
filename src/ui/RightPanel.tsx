@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { bbox as getBbox } from '@turf/turf';
 import type { CountryState, City, POI, Category, User, Selection, POILink } from '../types';
 import { debounce, searchPlaces, type GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
-import { buildCountryNameIndex } from '../utils/geo';
+import { buildCountryIndex } from '../utils/geo';
 import './RightPanel.css';
 
 interface RightPanelProps {
@@ -96,7 +95,7 @@ export function RightPanel({
 }: RightPanelProps) {
   const hasSelection = !!selection.type && !!selection.id;
   const hasSearchResult = !!searchResult;
-  const countryNameByIso = useMemo(() => buildCountryNameIndex(countriesGeoJSON), [countriesGeoJSON]);
+  const countryIndex = useMemo(() => buildCountryIndex(countriesGeoJSON), [countriesGeoJSON]);
 
   if (!hasSelection && !hasSearchResult) return null;
 
@@ -104,8 +103,7 @@ export function RightPanel({
     selection,
     cities,
     pois,
-    countriesGeoJSON,
-    countryNameByIso,
+    countryIndex,
   });
 
   return (
@@ -145,8 +143,7 @@ export function RightPanel({
               user={user}
               otherUser={otherUser}
               countriesState={countriesState}
-              countriesGeoJSON={countriesGeoJSON}
-              countryNameByIso={countryNameByIso}
+              countryIndex={countryIndex}
               cities={cities}
               worldCities={worldCities}
               onFlagToggle={onCountryFlagToggle}
@@ -287,14 +284,12 @@ function getSelectionSummary({
   selection,
   cities,
   pois,
-  countriesGeoJSON,
-  countryNameByIso,
+  countryIndex,
 }: {
   selection: Selection;
   cities: City[];
   pois: POI[];
-  countriesGeoJSON: GeoJSON.FeatureCollection | null;
-  countryNameByIso: Record<string, string>;
+  countryIndex: Record<string, { name: string }>;
 }): { title: string; subtitle?: string; typeLabel: string } | null {
   if (!selection.type || !selection.id) return null;
   if (selection.type === 'city') {
@@ -305,11 +300,8 @@ function getSelectionSummary({
     const poi = pois.find(p => p.id === selection.id);
     return { title: poi?.label || 'POI', typeLabel: 'POI' };
   }
-  const countryFeature = countriesGeoJSON?.features.find(
-    f => f.properties?.iso_a3 === selection.id
-  );
   return {
-    title: countryNameByIso[selection.id] || countryFeature?.properties?.name || selection.id,
+    title: countryIndex[selection.id]?.name || selection.id,
     typeLabel: 'Country',
   };
 }
@@ -361,8 +353,7 @@ function CountryDetails({
   user,
   otherUser,
   countriesState,
-  countriesGeoJSON,
-  countryNameByIso,
+  countryIndex,
   cities,
   pois,
   worldCities,
@@ -380,8 +371,7 @@ function CountryDetails({
   user: User;
   otherUser: User | null;
   countriesState: CountryState[];
-  countriesGeoJSON: GeoJSON.FeatureCollection | null;
-  countryNameByIso: Record<string, string>;
+  countryIndex: Record<string, { name: string; bounds: [number, number, number, number] }>;
   cities: City[];
   pois: POI[];
   worldCities: GeoJSON.FeatureCollection | null;
@@ -402,14 +392,9 @@ function CountryDetails({
   onCityPromptDismiss: () => void;
 }) {
   const state = countriesState.find(s => s.iso_a3 === isoA3);
-  const countryFeature = countriesGeoJSON?.features.find(
-    f => f.properties?.iso_a3 === isoA3
-  );
-  const countryName = countryNameByIso[isoA3] || countryFeature?.properties?.name || isoA3;
-  const countryBounds = useMemo(() => {
-    if (!countryFeature) return null;
-    return getBbox(countryFeature) as [number, number, number, number];
-  }, [countryFeature]);
+  const countryEntry = countryIndex[isoA3];
+  const countryName = countryEntry?.name || isoA3;
+  const countryBounds = countryEntry?.bounds ?? null;
 
   const userWant = state?.want_by?.[user.id] === true;
   const userBeen = state?.been_by?.[user.id] === true;
