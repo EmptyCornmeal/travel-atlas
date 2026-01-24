@@ -77,9 +77,9 @@ body {
   transform: translateX(-50%);
   z-index: 500;
   padding: 12px 20px;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--panel-bg);
   border-radius: 24px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-sm);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -115,13 +115,13 @@ button {
 .reset-view-btn {
   padding: 10px 14px;
   border-radius: 999px;
-  border: 1px solid #E5E7EB;
+  border: 1px solid var(--border-subtle);
   background: #fff;
   font-size: 13px;
   font-weight: 600;
   color: #1F2937;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
   transition: all 0.15s ease;
 }
 
@@ -131,15 +131,15 @@ button {
 }
 
 .map-legend {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid #E5E7EB;
-  border-radius: 12px;
-  padding: 12px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  background: var(--panel-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 220px;
+  max-width: 240px;
 }
 
 .legend-label {
@@ -147,7 +147,7 @@ button {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #6B7280;
+  color: var(--text-muted);
 }
 
 .legend-row {
@@ -156,6 +156,26 @@ button {
   gap: 8px;
   font-size: 12px;
   color: #1F2937;
+}
+
+.legend-row-multi {
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.legend-row-label {
+  min-width: 88px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.legend-row-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .cluster-popup {

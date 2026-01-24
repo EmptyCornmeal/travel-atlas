@@ -135,4 +135,9 @@ export const USER_COLORS = {
     light: '#C4B5FD',
     dark: '#6D28D9',
   },
+  mixed: {
+    solid: '#F59E0B',
+    light: '#FDE68A',
+    dark: '#B45309',
+  },
 } as const;

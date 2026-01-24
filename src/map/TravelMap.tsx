@@ -703,6 +703,31 @@ function getWhoMarked(
   };
 }
 
+function getCompositeState(
+  beenBy: Record<string, boolean>,
+  wantBy: Record<string, boolean>,
+  meId: string,
+  herId: string | null
+): { owner: 'me' | 'her' | 'both' | 'mixed'; status: 'been' | 'want' | 'none' } {
+  const meBeen = beenBy[meId] === true;
+  const meWant = wantBy[meId] === true;
+  const herBeen = herId ? beenBy[herId] === true : false;
+  const herWant = herId ? wantBy[herId] === true : false;
+
+  const bothBeen = meBeen && herBeen;
+  const bothWant = meWant && herWant;
+  const mixed = (meBeen && herWant) || (meWant && herBeen);
+
+  if (bothBeen) return { owner: 'both', status: 'been' };
+  if (bothWant) return { owner: 'both', status: 'want' };
+  if (mixed) return { owner: 'mixed', status: 'been' };
+  if (meBeen) return { owner: 'me', status: 'been' };
+  if (meWant) return { owner: 'me', status: 'want' };
+  if (herBeen) return { owner: 'her', status: 'been' };
+  if (herWant) return { owner: 'her', status: 'want' };
+  return { owner: 'me', status: 'none' };
+}
+
 // Get country styling based on state
 function getCountryStyling(
   state: CountryState | undefined,
@@ -844,45 +869,14 @@ function getCityStyling(
   outlineColor: string;
   status: 'been' | 'want' | 'none';
 } {
-  const { userWant, userBeen, otherWant, otherBeen } = getWhoMarked(
-    city.want_by || {},
+  const composite = getCompositeState(
     city.been_by || {},
+    city.want_by || {},
     user.id,
     otherUser?.id || null
   );
 
-  // Been wins over want
-  const effectiveUserBeen = userBeen;
-  const effectiveOtherBeen = otherBeen;
-  const effectiveUserWant = userWant && !userBeen;
-  const effectiveOtherWant = otherWant && !otherBeen;
-
-  const bothBeen = effectiveUserBeen && effectiveOtherBeen;
-  const bothWant = effectiveUserWant && effectiveOtherWant;
-
-  let color: 'blue' | 'red' | 'purple';
-  let status: 'been' | 'want' | 'none';
-
-  if (bothBeen) {
-    color = 'purple';
-    status = 'been';
-  } else if (bothWant) {
-    color = 'purple';
-    status = 'want';
-  } else if (effectiveUserBeen) {
-    color = user.color;
-    status = 'been';
-  } else if (effectiveOtherBeen && otherUser) {
-    color = otherUser.color;
-    status = 'been';
-  } else if (effectiveUserWant) {
-    color = user.color;
-    status = 'want';
-  } else if (effectiveOtherWant && otherUser) {
-    color = otherUser.color;
-    status = 'want';
-  } else {
-    // Default - gray
+  if (composite.status === 'none') {
     return {
       fillColor: '#9CA3AF',
       outlineColor: '#6B7280',
@@ -890,12 +884,26 @@ function getCityStyling(
     };
   }
 
-  const colors = USER_COLORS[color];
+  const ownerColorKey = (() => {
+    switch (composite.owner) {
+      case 'both':
+        return 'purple';
+      case 'mixed':
+        return 'mixed';
+      case 'her':
+        return otherUser?.color ?? user.color;
+      case 'me':
+      default:
+        return user.color;
+    }
+  })();
+
+  const colors = USER_COLORS[ownerColorKey];
 
   return {
     fillColor: colors.solid,
     outlineColor: colors.dark,
-    status,
+    status: composite.status,
   };
 }
 
@@ -911,41 +919,25 @@ function getPOIStyling(
   pattern: 'solid' | 'hatched';
 } {
   const isCreator = poi.created_by === user.id;
-  const isEndorsed = otherUser && poi.endorsed_by?.[otherUser.id] === true;
+  const endorsedByOther = otherUser && poi.endorsed_by?.[otherUser.id] === true;
+  const endorsedByMe = poi.endorsed_by?.[user.id] === true;
 
-  // Status determines pattern
-  const pattern: 'solid' | 'hatched' = poi.status === 'been' ? 'solid' : 'hatched';
+  const owner: 'me' | 'her' | 'both' = isCreator
+    ? endorsedByOther ? 'both' : 'me'
+    : endorsedByMe ? 'both' : 'her';
 
-  // Color based on creator and endorsement
-  let color: 'blue' | 'red' | 'purple';
+  const ownerColorKey = owner === 'both'
+    ? 'purple'
+    : owner === 'her'
+      ? otherUser?.color ?? user.color
+      : user.color;
 
-  if (isCreator) {
-    // Created by current user
-    if (isEndorsed) {
-      color = 'purple'; // Both users involved
-    } else {
-      color = user.color;
-    }
-  } else {
-    // Created by other user
-    if (otherUser) {
-      const creatorEndorsed = poi.endorsed_by?.[user.id] === true;
-      if (creatorEndorsed) {
-        color = 'purple';
-      } else {
-        color = otherUser.color;
-      }
-    } else {
-      color = 'purple'; // Fallback
-    }
-  }
-
-  const colors = USER_COLORS[color];
+  const colors = USER_COLORS[ownerColorKey];
 
   return {
     fillColor: colors.solid,
     outlineColor: colors.dark,
-    pattern,
+    pattern: poi.status === 'been' ? 'solid' : 'hatched',
   };
 }
 
