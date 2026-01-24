@@ -11,6 +11,7 @@ interface NominatimResult {
   lat: string;
   lon: string;
   display_name: string;
+  importance?: number;
   name?: string;
   address?: {
     city?: string;
@@ -34,6 +35,7 @@ export interface GeocodingResult {
   lng: number;
   country?: string;
   countryCode?: string;
+  importance?: number;
   type: 'city' | 'poi' | 'other';
   placeClass?: string;
   placeType?: string;
@@ -102,6 +104,7 @@ export async function searchPlaces(query: string, options: SearchOptions = {}): 
       lng: parseFloat(r.lon),
       country: r.address?.country,
       countryCode: r.address?.country_code?.toUpperCase(),
+      importance: r.importance,
       type: inferResultType(r),
       placeClass: r.class,
       placeType: r.type,
@@ -145,6 +148,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<Geocodin
       lng: parseFloat(result.lon),
       country: result.address?.country,
       countryCode: result.address?.country_code?.toUpperCase(),
+      importance: result.importance,
       type: inferResultType(result),
       placeClass: result.class,
       placeType: result.type,

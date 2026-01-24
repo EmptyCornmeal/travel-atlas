@@ -3,6 +3,7 @@ import { bbox as getBbox } from '@turf/turf';
 import type { CountryState, City, POI, Category, User, Selection, POILink } from '../types';
 import { debounce, searchPlaces, type GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
+import { buildCountryNameIndex } from '../utils/geo';
 import './RightPanel.css';
 
 interface RightPanelProps {
@@ -95,6 +96,7 @@ export function RightPanel({
 }: RightPanelProps) {
   const hasSelection = !!selection.type && !!selection.id;
   const hasSearchResult = !!searchResult;
+  const countryNameByIso = useMemo(() => buildCountryNameIndex(countriesGeoJSON), [countriesGeoJSON]);
 
   if (!hasSelection && !hasSearchResult) return null;
 
@@ -103,6 +105,7 @@ export function RightPanel({
     cities,
     pois,
     countriesGeoJSON,
+    countryNameByIso,
   });
 
   return (
@@ -143,6 +146,7 @@ export function RightPanel({
               otherUser={otherUser}
               countriesState={countriesState}
               countriesGeoJSON={countriesGeoJSON}
+              countryNameByIso={countryNameByIso}
               cities={cities}
               worldCities={worldCities}
               onFlagToggle={onCountryFlagToggle}
@@ -259,16 +263,38 @@ function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: numb
   return 2 * earthRadiusKm * Math.atan2(Math.sqrt(sinLat + cosLat * sinLng), Math.sqrt(1 - sinLat - cosLat * sinLng));
 }
 
+type CitySearchResult = GeocodingResult & {
+  source: 'local' | 'geocoder';
+  importance?: number;
+};
+
+function normalizeCityKey(name: string, countryIsoA3: string): string {
+  return `${name.trim().toLowerCase()}::${countryIsoA3.trim().toUpperCase()}`;
+}
+
+function pickPreferredResult(existing: CitySearchResult, incoming: CitySearchResult): CitySearchResult {
+  if (existing.source === 'local' && incoming.source !== 'local') return existing;
+  if (incoming.source === 'local' && existing.source !== 'local') return incoming;
+  if (existing.source === 'geocoder' && incoming.source === 'geocoder') {
+    const existingImportance = existing.importance ?? 0;
+    const incomingImportance = incoming.importance ?? 0;
+    return incomingImportance > existingImportance ? incoming : existing;
+  }
+  return existing;
+}
+
 function getSelectionSummary({
   selection,
   cities,
   pois,
   countriesGeoJSON,
+  countryNameByIso,
 }: {
   selection: Selection;
   cities: City[];
   pois: POI[];
   countriesGeoJSON: GeoJSON.FeatureCollection | null;
+  countryNameByIso: Record<string, string>;
 }): { title: string; subtitle?: string; typeLabel: string } | null {
   if (!selection.type || !selection.id) return null;
   if (selection.type === 'city') {
@@ -283,7 +309,7 @@ function getSelectionSummary({
     f => f.properties?.iso_a3 === selection.id
   );
   return {
-    title: countryFeature?.properties?.name || selection.id,
+    title: countryNameByIso[selection.id] || countryFeature?.properties?.name || selection.id,
     typeLabel: 'Country',
   };
 }
@@ -336,6 +362,7 @@ function CountryDetails({
   otherUser,
   countriesState,
   countriesGeoJSON,
+  countryNameByIso,
   cities,
   pois,
   worldCities,
@@ -354,6 +381,7 @@ function CountryDetails({
   otherUser: User | null;
   countriesState: CountryState[];
   countriesGeoJSON: GeoJSON.FeatureCollection | null;
+  countryNameByIso: Record<string, string>;
   cities: City[];
   pois: POI[];
   worldCities: GeoJSON.FeatureCollection | null;
@@ -377,7 +405,7 @@ function CountryDetails({
   const countryFeature = countriesGeoJSON?.features.find(
     f => f.properties?.iso_a3 === isoA3
   );
-  const countryName = countryFeature?.properties?.name || isoA3;
+  const countryName = countryNameByIso[isoA3] || countryFeature?.properties?.name || isoA3;
   const countryBounds = useMemo(() => {
     if (!countryFeature) return null;
     return getBbox(countryFeature) as [number, number, number, number];
@@ -499,6 +527,8 @@ const CITY_TYPE_LABELS: Record<string, string> = {
   municipality: 'Municipality',
 };
 
+const CITY_DEDUPE_DISTANCE_KM = 5;
+
 function looksLikeSettlement(result: GeocodingResult): boolean {
   const name = result.name?.trim().toLowerCase();
   if (!name) return false;
@@ -572,7 +602,7 @@ function CountryCityManager({
 }) {
   const [cityQuery, setCityQuery] = useState('');
   const [cityStatus, setCityStatus] = useState<'want' | 'been'>(defaultStatus);
-  const [geocodingResults, setGeocodingResults] = useState<GeocodingResult[]>([]);
+  const [geocodingResults, setGeocodingResults] = useState<CitySearchResult[]>([]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const latestQueryRef = useRef('');
 
@@ -590,12 +620,12 @@ function CountryCityManager({
       .sort((a, b) => a.name.localeCompare(b.name))
   ), [cities, isoA3]);
 
-  const matchingCities = useMemo(() => {
+  const matchingCities = useMemo<CitySearchResult[]>(() => {
     if (!worldCities || cityQuery.trim().length < 2) return [];
 
     const query = cityQuery.trim().toLowerCase();
     const country = countryName.toLowerCase();
-    const matches: GeocodingResult[] = [];
+    const matches: CitySearchResult[] = [];
 
     for (const feature of worldCities.features) {
       const props = feature.properties as Record<string, unknown> | undefined;
@@ -624,6 +654,7 @@ function CountryCityManager({
         type: 'city',
         placeClass: 'place',
         placeType: 'city',
+        source: 'local',
       });
 
       if (matches.length >= 8) break;
@@ -659,7 +690,7 @@ function CountryCityManager({
         if (latestQueryRef.current !== query) return;
 
         const filtered = results.filter(result => isCityLikeResult(result));
-        setGeocodingResults(filtered);
+        setGeocodingResults(filtered.map(result => ({ ...result, source: 'geocoder' })));
 
         if (import.meta.env.DEV) {
           console.info('[city search] geocoder fallback', {
@@ -689,21 +720,33 @@ function CountryCityManager({
   }, [cityQuery, matchingCities.length, countryBounds, fetchGeocoderFallback]);
 
   const combinedResults = useMemo(() => {
-    const seen = new Set<string>();
-    const combined: GeocodingResult[] = [];
+    const combined = [...matchingCities, ...geocodingResults];
+    const deduped: CitySearchResult[] = [];
 
-    const addResult = (result: GeocodingResult) => {
-      const key = `${result.name.toLowerCase()}-${result.lat.toFixed(3)}-${result.lng.toFixed(3)}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      combined.push(result);
-    };
+    for (const result of combined) {
+      const resultKey = normalizeCityKey(result.name, isoA3);
+      const matchIndex = deduped.findIndex(existing => {
+        const existingKey = normalizeCityKey(existing.name, isoA3);
+        if (existingKey === resultKey) return true;
+        if (!Number.isFinite(existing.lat) || !Number.isFinite(existing.lng)) return false;
+        if (!Number.isFinite(result.lat) || !Number.isFinite(result.lng)) return false;
+        return distanceKm(
+          { lat: existing.lat, lng: existing.lng },
+          { lat: result.lat, lng: result.lng }
+        ) <= CITY_DEDUPE_DISTANCE_KM;
+      });
 
-    matchingCities.forEach(addResult);
-    geocodingResults.forEach(addResult);
+      if (matchIndex === -1) {
+        deduped.push(result);
+        continue;
+      }
 
-    return combined.slice(0, 8);
-  }, [matchingCities, geocodingResults]);
+      const preferred = pickPreferredResult(deduped[matchIndex], result);
+      deduped[matchIndex] = preferred;
+    }
+
+    return deduped.slice(0, 8);
+  }, [matchingCities, geocodingResults, isoA3]);
 
   const handleAddCity = (result: GeocodingResult) => {
     onCityAdd({
@@ -719,7 +762,7 @@ function CountryCityManager({
     return citiesInCountry.some(city => {
       if (city.name.toLowerCase() === result.name.toLowerCase()) return true;
       if (!Number.isFinite(city.lat) || !Number.isFinite(city.lng)) return false;
-      return distanceKm({ lat: city.lat, lng: city.lng }, { lat: result.lat, lng: result.lng }) <= 5;
+      return distanceKm({ lat: city.lat, lng: city.lng }, { lat: result.lat, lng: result.lng }) <= CITY_DEDUPE_DISTANCE_KM;
     });
   };
 

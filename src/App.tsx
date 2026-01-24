@@ -28,7 +28,7 @@ import { Auth } from './ui/Auth';
 import { POIForm } from './ui/POIForm';
 import { ToastContainer, useToasts } from './ui/Toast';
 import './App.css';
-import { findCountryIsoA3 } from './utils/geo';
+import { buildCountryNameIndex, findCountryIsoA3 } from './utils/geo';
 import { USER_COLORS } from './types';
 import { bbox as getBbox } from '@turf/turf';
 
@@ -190,6 +190,7 @@ function App() {
   })();
 
   const activeUser = actingUser ?? user;
+  const countryNameByIso = useMemo(() => buildCountryNameIndex(countriesGeoJSON), [countriesGeoJSON]);
 
   const selectedCountry = useMemo(() => {
     if (selection.type !== 'country' || !selection.id || !countriesGeoJSON) return null;
@@ -198,10 +199,10 @@ function App() {
     const bounds = getBbox(feature) as [number, number, number, number];
     return {
       isoA3: selection.id,
-      name: feature.properties?.name || selection.id,
+      name: countryNameByIso[selection.id] || feature.properties?.name || selection.id,
       bounds,
     };
-  }, [selection, countriesGeoJSON]);
+  }, [selection, countriesGeoJSON, countryNameByIso]);
 
   const cityPromptSkippedForSelection = useMemo(() => {
     if (!activeUser || selection.type !== 'country' || !selection.id) return false;
@@ -432,6 +433,41 @@ function App() {
     }
   }, [user, getTargetUserIds]);
 
+  const applyCountryVisitedOptimistic = useCallback((isoA3: string, userId: string) => {
+    setCountriesState(prev => {
+      const existing = prev.find(s => s.iso_a3 === isoA3);
+      if (existing) {
+        return prev.map(s => {
+          if (s.iso_a3 !== isoA3) return s;
+          return {
+            ...s,
+            want_by: { ...s.want_by, [userId]: false },
+            been_by: { ...s.been_by, [userId]: true },
+          };
+        });
+      }
+      return [
+        ...prev,
+        {
+          iso_a3: isoA3,
+          want_by: { [userId]: false },
+          been_by: { [userId]: true },
+        },
+      ];
+    });
+  }, []);
+
+  const ensureCountryVisited = useCallback(async (isoA3: string) => {
+    if (!user) return;
+    await adminAwareSetCountryFlag(isoA3, 'want', false);
+    await adminAwareSetCountryFlag(isoA3, 'been', true);
+
+    const shouldOptimisticallyUpdate = !isAdmin || !adminMode || actingAs === 'me';
+    if (shouldOptimisticallyUpdate) {
+      applyCountryVisitedOptimistic(isoA3, user.id);
+    }
+  }, [user, adminAwareSetCountryFlag, applyCountryVisitedOptimistic, isAdmin, adminMode, actingAs]);
+
 
 
   // Handlers
@@ -540,7 +576,12 @@ function App() {
 
     setIsLoading(true);
     try {
+      const city = cities.find(c => c.id === cityId);
       await adminAwareSetCityFlag(cityId, flag, value);
+
+      if (flag === 'been' && value && city?.country_iso_a3) {
+        await ensureCountryVisited(city.country_iso_a3);
+      }
 
       // If we acted as someone other than "me", re-sync from DB (avoid wrong optimistic write)
       if (isAdmin && adminMode && actingAs !== 'me') {
@@ -572,6 +613,8 @@ function App() {
     adminMode,
     actingAs,
     adminAwareSetCityFlag,
+    ensureCountryVisited,
+    cities,
     fetchAllData,
     toast,
   ]);
@@ -798,6 +841,14 @@ function App() {
             if (error) throw error;
           }
 
+          if (city.status === 'been') {
+            try {
+              await ensureCountryVisited(city.countryIsoA3);
+            } catch (error) {
+              console.warn('Failed to auto-mark country for city visit:', error);
+            }
+          }
+
           await fetchAllData();
           setSelection({ type: 'city', id: duplicate.id });
           setFocusLocation({ lat: duplicate.lat, lng: duplicate.lng, zoom: 6 });
@@ -831,6 +882,14 @@ function App() {
           if (flagError) throw flagError;
         }
 
+        if (city.status === 'been') {
+          try {
+            await ensureCountryVisited(city.countryIsoA3);
+          } catch (error) {
+            console.warn('Failed to auto-mark country for city visit:', error);
+          }
+        }
+
         await fetchAllData();
         setSelection({ type: 'city', id: newCity.id });
         setFocusLocation({ lat: newCity.lat, lng: newCity.lng, zoom: 6 });
@@ -856,6 +915,14 @@ function App() {
         setTimeout(() => setFocusLocation(null), 800);
         toast.success('City added');
         setCityPromptTarget(null);
+
+        if (city.status === 'been') {
+          try {
+            await ensureCountryVisited(city.countryIsoA3);
+          } catch (error) {
+            console.warn('Failed to auto-mark country for city visit:', error);
+          }
+        }
       }
     } catch (error) {
       console.error('Error creating city:', error);
@@ -871,6 +938,7 @@ function App() {
     actingAs,
     getTargetUserIds,
     fetchAllData,
+    ensureCountryVisited,
     toast,
   ]);
 
