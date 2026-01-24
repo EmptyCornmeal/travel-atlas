@@ -77,9 +77,6 @@ function App() {
   const [searchSelection, setSearchSelection] = useState<GeocodingResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showPOIForm, setShowPOIForm] = useState<{ lat: number; lng: number } | null>(null);
-  const [focusCountry, setFocusCountry] = useState<{ isoA3: string; bbox: [number, number, number, number] } | null>(
-    null
-  );
   const [focusLocation, setFocusLocation] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
 
@@ -392,14 +389,6 @@ function App() {
     setSearchSelection(null);
   }, []);
 
-  // Country select from search (zoom and select)
-  const handleCountrySelect = useCallback((isoA3: string, bbox: [number, number, number, number]) => {
-    setSelection({ type: 'country', id: isoA3 });
-    setFocusCountry({ isoA3, bbox });
-    setTimeout(() => setFocusCountry(null), 800);
-    setSearchSelection(null);
-  }, []);
-
   // Country flag toggle with mutual exclusivity (been turns off want)
   const handleCountryFlagToggle = useCallback(async (isoA3: string, flag: 'want' | 'been', value: boolean) => {
     if (!user) return;
@@ -627,43 +616,44 @@ function App() {
     }
   }, [user, toast]);
 
-  // Add city from search
-  const handleSearchResultSelect = useCallback(async (result: GeocodingResult, type: 'city' | 'poi') => {
+  const handlePOISearchAdd = useCallback((result: GeocodingResult) => {
+    setSearchSelection(null);
+    setShowPOIForm({ lat: result.lat, lng: result.lng });
+  }, []);
+
+  const handleCountryCityAdd = useCallback(async (city: {
+    name: string;
+    lat: number;
+    lng: number;
+    countryIsoA3: string;
+    status: 'want' | 'been';
+  }) => {
     if (!user) return;
 
-    setSearchSelection(null);
-    if (type === 'city') {
-      setIsLoading(true);
-      try {
-        const countryIsoA3 = countriesGeoJSON
-          ? findCountryIsoA3(countriesGeoJSON, result.lat, result.lng)
-          : null;
+    setIsLoading(true);
+    try {
+      const newCity = await createCity({
+        name: city.name,
+        country_iso_a3: city.countryIsoA3,
+        lat: city.lat,
+        lng: city.lng,
+        want_by: city.status === 'want' ? { [user.id]: true } : {},
+        been_by: city.status === 'been' ? { [user.id]: true } : {},
+      });
 
-        const newCity = await createCity({
-          name: result.name,
-          country_iso_a3: countryIsoA3,
-          lat: result.lat,
-          lng: result.lng,
-          want_by: { [user.id]: true },
-          been_by: {},
-        });
-
-        if (newCity) {
-          setCities(prev => [newCity, ...prev]);
-          setSelection({ type: 'city', id: newCity.id });
-          setFocusLocation({ lat: newCity.lat, lng: newCity.lng, zoom: 6 });
-          setTimeout(() => setFocusLocation(null), 800);
-          toast.success('City added');
-        }
-      } catch (error) {
-        console.error('Error creating city:', error);
-        toast.error('Failed to add city');
+      if (newCity) {
+        setCities(prev => [newCity, ...prev]);
+        setSelection({ type: 'city', id: newCity.id });
+        setFocusLocation({ lat: newCity.lat, lng: newCity.lng, zoom: 6 });
+        setTimeout(() => setFocusLocation(null), 800);
+        toast.success('City added');
       }
-      setIsLoading(false);
-    } else if (type === 'poi') {
-      setShowPOIForm({ lat: result.lat, lng: result.lng });
+    } catch (error) {
+      console.error('Error creating city:', error);
+      toast.error('Failed to add city');
     }
-  }, [user, countriesGeoJSON, toast]);
+    setIsLoading(false);
+  }, [user, toast]);
 
   const handleSearchResultPreview = useCallback((result: GeocodingResult) => {
     setSearchSelection(result);
@@ -676,7 +666,6 @@ function App() {
   }, []);
 
   const handleResetView = useCallback(() => {
-    setFocusCountry(null);
     setFocusLocation(DEFAULT_VIEW);
     setTimeout(() => setFocusLocation(null), 800);
   }, []);
@@ -811,7 +800,6 @@ function App() {
         filters={filters}
         layers={layers}
         selection={selection}
-        focusCountry={focusCountry}
         focusLocation={focusLocation}
         onCountryClick={handleCountryClick}
         onCityClick={handleCityClick}
@@ -825,6 +813,7 @@ function App() {
         </button>
         <div className="map-legend">
           <span className="legend-label">Legend</span>
+          <span className="legend-label">Colors</span>
           <div className="legend-row">
             <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.blue.solid }}></span>
             <span>{(actingUser ?? user).color === 'blue' ? (actingUser ?? user).name : actingOtherUser?.name || 'Myles'}</span>
@@ -837,12 +826,35 @@ function App() {
             <span className="legend-swatch" style={{ backgroundColor: USER_COLORS.purple.solid }}></span>
             <span>Both</span>
           </div>
+          <span className="legend-label">Countries</span>
           <div className="legend-row">
             <span className="legend-swatch solid"></span>
-            <span>Have visited</span>
+            <span>Visited</span>
           </div>
           <div className="legend-row">
             <span className="legend-swatch hatched"></span>
+            <span>Want to visit</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-swatch neutral"></span>
+            <span>Unmarked</span>
+          </div>
+          <span className="legend-label">Cities</span>
+          <div className="legend-row">
+            <span className="legend-swatch city-solid"></span>
+            <span>Visited</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-swatch city-hollow"></span>
+            <span>Want to visit</span>
+          </div>
+          <span className="legend-label">POIs</span>
+          <div className="legend-row">
+            <span className="legend-swatch poi-solid"></span>
+            <span>Visited</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-swatch poi-hatched"></span>
             <span>Want to visit</span>
           </div>
         </div>
@@ -854,12 +866,9 @@ function App() {
         filters={filters}
         layers={layers}
         categories={categories}
-        countriesGeoJSON={countriesGeoJSON}
-        worldCities={worldCities}
         onFiltersChange={setFilters}
         onLayersChange={setLayers}
         onSearchResultPreview={handleSearchResultPreview}
-        onCountrySelect={handleCountrySelect}
         onSearchReset={handleSearchReset}
       />
 
@@ -873,12 +882,15 @@ function App() {
         pois={pois}
         categories={categories}
         countriesGeoJSON={countriesGeoJSON}
+        worldCities={worldCities}
         onClose={handleCloseSelection}
-        onSearchResultAdd={handleSearchResultSelect}
+        onSearchResultAdd={handlePOISearchAdd}
         onSearchResultClear={handleSearchReset}
         isCollapsed={isRightPanelCollapsed}
         onToggleCollapse={() => setIsRightPanelCollapsed(prev => !prev)}
         onCountryFlagToggle={handleCountryFlagToggle}
+        onCountryCityAdd={handleCountryCityAdd}
+        onCitySelect={handleCityClick}
         onCityFlagToggle={handleCityFlagToggle}
         onCityDelete={handleCityDelete}
         onPOIUpdate={handlePOIUpdate}

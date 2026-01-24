@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { CountryState, City, POI, Category, User, Selection, POILink } from '../types';
 import type { GeocodingResult } from '../services/geocoding';
 import { USER_COLORS } from '../types';
@@ -14,12 +14,21 @@ interface RightPanelProps {
   pois: POI[];
   categories: Category[];
   countriesGeoJSON: GeoJSON.FeatureCollection | null;
+  worldCities: GeoJSON.FeatureCollection | null;
   onClose: () => void;
-  onSearchResultAdd: (result: GeocodingResult, type: 'city' | 'poi') => void;
+  onSearchResultAdd: (result: GeocodingResult) => void;
   onSearchResultClear: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   onCountryFlagToggle: (isoA3: string, flag: 'want' | 'been', value: boolean) => void;
+  onCountryCityAdd: (city: {
+    name: string;
+    lat: number;
+    lng: number;
+    countryIsoA3: string;
+    status: 'want' | 'been';
+  }) => void;
+  onCitySelect: (cityId: string) => void;
   onCityFlagToggle: (cityId: string, flag: 'want' | 'been', value: boolean) => void;
   onCityDelete: (cityId: string) => void;
   onPOIUpdate: (poiId: string, updates: {
@@ -45,12 +54,15 @@ export function RightPanel({
   pois,
   categories,
   countriesGeoJSON,
+  worldCities,
   onClose,
   onSearchResultAdd,
   onSearchResultClear,
   isCollapsed,
   onToggleCollapse,
   onCountryFlagToggle,
+  onCountryCityAdd,
+  onCitySelect,
   onCityFlagToggle,
   onCityDelete,
   onPOIUpdate,
@@ -108,7 +120,11 @@ export function RightPanel({
               otherUser={otherUser}
               countriesState={countriesState}
               countriesGeoJSON={countriesGeoJSON}
+              cities={cities}
+              worldCities={worldCities}
               onFlagToggle={onCountryFlagToggle}
+              onCityAdd={onCountryCityAdd}
+              onCitySelect={onCitySelect}
             />
           )}
 
@@ -177,7 +193,7 @@ function SearchDetails({
   onClear,
 }: {
   result: GeocodingResult;
-  onAdd: (result: GeocodingResult, type: 'city' | 'poi') => void;
+  onAdd: (result: GeocodingResult) => void;
   onClear: () => void;
 }) {
   return (
@@ -194,18 +210,17 @@ function SearchDetails({
         </div>
         <div className="search-meta-row">
           <span className="meta-label">Type</span>
-          <span className={`result-type type-${result.type}`}>{result.type}</span>
+          <span className={`result-type type-${result.type === 'poi' ? 'poi' : 'place'}`}>
+            {result.type === 'poi' ? 'poi' : 'place'}
+          </span>
         </div>
       </div>
 
       <div className="search-actions">
-        <button className="primary-action" onClick={() => { onAdd(result, 'city'); onClear(); }}>
-          Add city
+        <button className="primary-action" onClick={() => { onAdd(result); onClear(); }}>
+          Add point of interest
         </button>
-        <button className="secondary-action" onClick={() => { onAdd(result, 'poi'); onClear(); }}>
-          Add POI
-        </button>
-        <button className="tertiary-action" onClick={onClear}>
+        <button className="secondary-action" onClick={onClear}>
           Dismiss
         </button>
       </div>
@@ -220,14 +235,28 @@ function CountryDetails({
   otherUser,
   countriesState,
   countriesGeoJSON,
+  cities,
+  worldCities,
   onFlagToggle,
+  onCityAdd,
+  onCitySelect,
 }: {
   isoA3: string;
   user: User;
   otherUser: User | null;
   countriesState: CountryState[];
   countriesGeoJSON: GeoJSON.FeatureCollection | null;
+  cities: City[];
+  worldCities: GeoJSON.FeatureCollection | null;
   onFlagToggle: (isoA3: string, flag: 'want' | 'been', value: boolean) => void;
+  onCityAdd: (city: {
+    name: string;
+    lat: number;
+    lng: number;
+    countryIsoA3: string;
+    status: 'want' | 'been';
+  }) => void;
+  onCitySelect: (cityId: string) => void;
 }) {
   const state = countriesState.find(s => s.iso_a3 === isoA3);
   const countryFeature = countriesGeoJSON?.features.find(
@@ -285,6 +314,180 @@ function CountryDetails({
           </div>
         </div>
       )}
+
+      <CountryCityManager
+        isoA3={isoA3}
+        countryName={countryName}
+        user={user}
+        cities={cities}
+        worldCities={worldCities}
+        onCityAdd={onCityAdd}
+        onCitySelect={onCitySelect}
+        defaultStatus={userBeen ? 'been' : 'want'}
+      />
+    </div>
+  );
+}
+
+function CountryCityManager({
+  isoA3,
+  countryName,
+  user,
+  cities,
+  worldCities,
+  onCityAdd,
+  onCitySelect,
+  defaultStatus,
+}: {
+  isoA3: string;
+  countryName: string;
+  user: User;
+  cities: City[];
+  worldCities: GeoJSON.FeatureCollection | null;
+  onCityAdd: (city: {
+    name: string;
+    lat: number;
+    lng: number;
+    countryIsoA3: string;
+    status: 'want' | 'been';
+  }) => void;
+  onCitySelect: (cityId: string) => void;
+  defaultStatus: 'want' | 'been';
+}) {
+  const [cityQuery, setCityQuery] = useState('');
+  const [cityStatus, setCityStatus] = useState<'want' | 'been'>(defaultStatus);
+
+  useEffect(() => {
+    setCityStatus(defaultStatus);
+  }, [defaultStatus]);
+
+  const citiesInCountry = useMemo(() => (
+    cities
+      .filter(city => city.country_iso_a3 === isoA3)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  ), [cities, isoA3]);
+
+  const matchingCities = useMemo(() => {
+    if (!worldCities || cityQuery.trim().length < 2) return [];
+
+    const query = cityQuery.trim().toLowerCase();
+    const country = countryName.toLowerCase();
+    const matches: GeocodingResult[] = [];
+
+    for (const feature of worldCities.features) {
+      const props = feature.properties as Record<string, unknown> | undefined;
+      const name = (props?.name || props?.CITY_NAME || '') as string;
+      const featureCountry = (props?.country || props?.CNTRY_NAME || '') as string;
+
+      if (!name || !featureCountry) continue;
+
+      const nameLower = name.toLowerCase();
+      const countryLower = featureCountry.toLowerCase();
+
+      if (!nameLower.includes(query)) continue;
+      if (!(countryLower.includes(country) || country.includes(countryLower))) continue;
+
+      const coords = (feature.geometry as GeoJSON.Point).coordinates as number[];
+      if (coords.length < 2 || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) continue;
+
+      matches.push({
+        id: `local-${name}-${coords[0]}-${coords[1]}`,
+        name,
+        displayName: `${name}, ${featureCountry}`,
+        lat: coords[1],
+        lng: coords[0],
+        country: featureCountry,
+        type: 'city',
+      });
+
+      if (matches.length >= 8) break;
+    }
+
+    return matches;
+  }, [worldCities, cityQuery, countryName]);
+
+  const handleAddCity = (result: GeocodingResult) => {
+    onCityAdd({
+      name: result.name,
+      lat: result.lat,
+      lng: result.lng,
+      countryIsoA3: isoA3,
+      status: cityStatus,
+    });
+  };
+
+  return (
+    <div className="city-manager">
+      <div className="section-header">
+        <h3>Cities in {countryName}</h3>
+        <span className="count-pill">{citiesInCountry.length}</span>
+      </div>
+
+      {citiesInCountry.length > 0 ? (
+        <ul className="city-list">
+          {citiesInCountry.map(city => {
+            const userBeen = city.been_by?.[user.id] === true;
+            const userWant = city.want_by?.[user.id] === true;
+            const statusLabel = userBeen ? 'Visited' : userWant ? 'Want to visit' : 'Unmarked';
+            return (
+              <li key={city.id}>
+                <button className="city-row" onClick={() => onCitySelect(city.id)}>
+                  <span className="city-name">{city.name}</span>
+                  <span className={`city-status ${userBeen ? 'been' : userWant ? 'want' : 'none'}`}>
+                    {statusLabel}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="empty-state">No cities saved yet. Add the ones you have visited.</p>
+      )}
+
+      <div className="city-search">
+        <div className="city-search-row">
+          <input
+            type="text"
+            value={cityQuery}
+            onChange={event => setCityQuery(event.target.value)}
+            placeholder={`Add a city in ${countryName}`}
+          />
+          <select value={cityStatus} onChange={event => setCityStatus(event.target.value as 'want' | 'been')}>
+            <option value="been">Visited</option>
+            <option value="want">Want to visit</option>
+          </select>
+        </div>
+
+        {cityQuery.trim().length >= 2 && (
+          <ul className="city-search-results">
+            {matchingCities.length > 0 ? (
+              matchingCities.map(result => {
+                const alreadyAdded = citiesInCountry.some(
+                  city => city.name.toLowerCase() === result.name.toLowerCase()
+                );
+                return (
+                  <li key={result.id}>
+                    <button
+                      className="city-result"
+                      onClick={() => handleAddCity(result)}
+                      disabled={alreadyAdded}
+                    >
+                      <span>
+                        {result.name}
+                        <span className="city-result-sub">{result.country}</span>
+                      </span>
+                      <span className="city-result-action">{alreadyAdded ? 'Added' : 'Add'}</span>
+                    </button>
+                  </li>
+                );
+              })
+            ) : (
+              <li className="city-search-empty">No matches. Try another spelling.</li>
+            )}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

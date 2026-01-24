@@ -109,9 +109,9 @@ export function TravelMap({
           'carto-light': {
             type: 'raster',
             tiles: [
-              'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
-              'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
-              'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+              'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+              'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+              'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
             ],
             tileSize: 256,
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
@@ -219,29 +219,47 @@ export function TravelMap({
       data: { type: 'FeatureCollection', features: [] },
     });
 
-    // Add cities circle layer
+    // Add cities ring layer
     mapInstance.addLayer({
-      id: 'cities-circle',
+      id: 'cities-ring',
       type: 'circle',
       source: 'cities',
       paint: {
         'circle-radius': [
           'case',
-          ['==', ['get', 'selected'], true], 10,
-          7
+          ['==', ['get', 'selected'], true], 13,
+          10
         ],
-        'circle-color': ['get', 'fillColor'],
+        'circle-color': 'rgba(0, 0, 0, 0)',
         'circle-stroke-color': ['get', 'outlineColor'],
         'circle-stroke-width': [
           'case',
-          ['==', ['get', 'pattern'], 'hatched'], 3,
-          ['==', ['get', 'selected'], true], 3,
-          1.5
+          ['==', ['get', 'selected'], true], 3.5,
+          2.5
         ],
+        'circle-opacity': 0.9,
+      },
+    });
+
+    // Add cities core layer
+    mapInstance.addLayer({
+      id: 'cities-core',
+      type: 'circle',
+      source: 'cities',
+      paint: {
+        'circle-radius': [
+          'case',
+          ['==', ['get', 'selected'], true], 9,
+          6
+        ],
+        'circle-color': ['get', 'fillColor'],
+        'circle-stroke-color': ['get', 'outlineColor'],
+        'circle-stroke-width': 1.5,
         'circle-opacity': [
           'case',
-          ['==', ['get', 'pattern'], 'hatched'], 0.3,
-          0.8
+          ['==', ['get', 'status'], 'want'], 0,
+          ['==', ['get', 'status'], 'none'], 0.25,
+          0.85
         ],
       },
     });
@@ -373,7 +391,16 @@ export function TravelMap({
       });
     });
 
-    mapInstance.on('click', 'cities-circle', (e: MapMouseEvent) => {
+    mapInstance.on('click', 'cities-ring', (e: MapMouseEvent) => {
+      e.originalEvent.stopPropagation();
+      clusterPopup.current?.remove();
+     const feature = (e as any).features?.[0];
+      if (feature?.properties?.id) {
+        onCityClick(feature.properties.id);
+      }
+    });
+
+    mapInstance.on('click', 'cities-core', (e: MapMouseEvent) => {
       e.originalEvent.stopPropagation();
       clusterPopup.current?.remove();
      const feature = (e as any).features?.[0];
@@ -449,7 +476,7 @@ export function TravelMap({
     mapInstance.on('click', (e: MapMouseEvent) => {
       // Check if we clicked on a feature
       const features = mapInstance.queryRenderedFeatures(e.point, {
-        layers: ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline', 'cities-circle', 'pois-point', 'pois-cluster'],
+        layers: ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline', 'cities-ring', 'cities-core', 'pois-point', 'pois-cluster'],
       });
 
       if (features.length === 0) {
@@ -459,7 +486,7 @@ export function TravelMap({
     });
 
     // Cursor changes
-    const pointerLayers = ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline', 'cities-circle', 'pois-point', 'pois-cluster'];
+    const pointerLayers = ['countries-neutral', 'countries-fill', 'countries-pattern', 'countries-outline', 'cities-ring', 'cities-core', 'pois-point', 'pois-cluster'];
     pointerLayers.forEach(layer => {
       mapInstance.on('mouseenter', layer, () => {
         mapInstance.getCanvas().style.cursor = 'pointer';
@@ -806,7 +833,7 @@ function getCityStyling(
 ): {
   fillColor: string;
   outlineColor: string;
-  pattern: 'solid' | 'hatched';
+  status: 'been' | 'want' | 'none';
 } {
   const { userWant, userBeen, otherWant, otherBeen } = getWhoMarked(
     city.want_by || {},
@@ -825,32 +852,32 @@ function getCityStyling(
   const bothWant = effectiveUserWant && effectiveOtherWant;
 
   let color: 'blue' | 'red' | 'purple';
-  let pattern: 'solid' | 'hatched';
+  let status: 'been' | 'want' | 'none';
 
   if (bothBeen) {
     color = 'purple';
-    pattern = 'solid';
+    status = 'been';
   } else if (bothWant) {
     color = 'purple';
-    pattern = 'hatched';
+    status = 'want';
   } else if (effectiveUserBeen) {
     color = user.color;
-    pattern = 'solid';
+    status = 'been';
   } else if (effectiveOtherBeen && otherUser) {
     color = otherUser.color;
-    pattern = 'solid';
+    status = 'been';
   } else if (effectiveUserWant) {
     color = user.color;
-    pattern = 'hatched';
+    status = 'want';
   } else if (effectiveOtherWant && otherUser) {
     color = otherUser.color;
-    pattern = 'hatched';
+    status = 'want';
   } else {
     // Default - gray
     return {
       fillColor: '#9CA3AF',
       outlineColor: '#6B7280',
-      pattern: 'solid',
+      status: 'none',
     };
   }
 
@@ -859,7 +886,7 @@ function getCityStyling(
   return {
     fillColor: colors.solid,
     outlineColor: colors.dark,
-    pattern,
+    status,
   };
 }
 
